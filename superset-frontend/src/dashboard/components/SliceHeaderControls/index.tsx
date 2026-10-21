@@ -74,6 +74,7 @@ import { useCrossFiltersScopingModal } from '../nativeFilters/FilterBar/CrossFil
 import { ViewResultsModalTrigger } from './ViewResultsModalTrigger';
 import { Global } from '@emotion/react';
 import { fullscreenStyles } from './Styles';
+import { ExportFilterMetadataMode } from 'src/utils/export';
 
 const RefreshTooltip = styled.div`
   ${({ theme }) => css`
@@ -133,9 +134,18 @@ export interface SliceHeaderControlsProps {
   logExploreChart?: (sliceId: number) => void;
   logEvent?: (eventName: string, eventData?: object) => void;
   toggleExpandSlice?: (sliceId: number) => void;
-  exportCSV?: (sliceId: number) => void;
-  exportPivotCSV?: (sliceId: number) => void;
-  exportFullCSV?: (sliceId: number) => void;
+  exportCSV?: (
+    sliceId: number,
+    exportFiltersMode?: ExportFilterMetadataMode,
+  ) => void;
+  exportPivotCSV?: (
+    sliceId: number,
+    exportFiltersMode?: ExportFilterMetadataMode,
+  ) => void;
+  exportFullCSV?: (
+    sliceId: number,
+    exportFiltersMode?: ExportFilterMetadataMode,
+  ) => void;
   exportXLSX?: (sliceId: number) => void;
   exportFullXLSX?: (sliceId: number) => void;
   handleToggleFullSize: () => void;
@@ -168,6 +178,29 @@ const queueChartResize = () => {
     window.dispatchEvent(new Event('resize'));
   }, 300);
 };
+
+const getExportFilterLabel = (mode: ExportFilterMetadataMode): string => {
+  switch (mode) {
+    case ExportFilterMetadataMode.None:
+      return t('Without filter metadata');
+    case ExportFilterMetadataMode.Inline:
+      return t('Include filters in metadata comments');
+    case ExportFilterMetadataMode.Separate:
+      return t('Include filters as a separate file');
+    default:
+      return mode;
+  }
+};
+
+const getExportFilterMenuItems = (
+  exportType: string,
+  onExport: (mode: ExportFilterMetadataMode) => void,
+) =>
+  Object.values(ExportFilterMetadataMode).map(mode => ({
+    key: `${exportType}-${mode}`,
+    label: getExportFilterLabel(mode),
+    onClick: () => onExport(mode),
+  }));
 
 const extensionsRegistry = getExtensionsRegistry();
 
@@ -687,6 +720,9 @@ const SliceHeaderControls = (
                 key: MenuKeys.ExportCsv,
                 label: t('Export to .CSV'),
                 icon: <Icons.FileOutlined css={dropdownIconsStyles} />,
+          children: getExportFilterMenuItems('dashboard-csv', mode =>
+            props.exportCSV?.(props.slice.slice_id, mode),
+          ),
               },
             ]),
         ...(isPivotTable
@@ -695,6 +731,10 @@ const SliceHeaderControls = (
                 key: MenuKeys.ExportPivotCsv,
                 label: t('Export to Pivoted .CSV'),
                 icon: <Icons.FileOutlined css={dropdownIconsStyles} />,
+                children: getExportFilterMenuItems(
+                  'dashboard-pivot-csv',
+                  mode => props.exportPivotCSV?.(props.slice.slice_id, mode),
+                ),
               },
               {
                 key: MenuKeys.ExportPivotXlsx,
@@ -720,6 +760,10 @@ const SliceHeaderControls = (
                 key: MenuKeys.ExportFullCsv,
                 label: t('Export to full .CSV'),
                 icon: <Icons.FileOutlined css={dropdownIconsStyles} />,
+                children: getExportFilterMenuItems(
+                  'dashboard-full-csv',
+                  mode => props.exportFullCSV?.(props.slice.slice_id, mode),
+                ),
               },
               {
                 key: MenuKeys.ExportFullXlsx,
