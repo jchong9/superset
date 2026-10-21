@@ -37,6 +37,7 @@ import { bindActionCreators } from 'redux';
 import { useDispatch, useSelector } from 'react-redux';
 
 import { exportChart } from 'src/explore/exploreUtils';
+import { ExportFilterMetadataMode } from 'src/utils/export';
 import ChartContainer from 'src/components/Chart/ChartContainer';
 import LastQueriedLabel from 'src/components/LastQueriedLabel';
 import {
@@ -564,7 +565,12 @@ const Chart = (props: ChartProps) => {
   );
 
   const exportTable = useCallback(
-    async (format: string, isFullCSV: boolean, isPivot = false) => {
+    async (
+      format: string,
+      isFullCSV: boolean,
+      isPivot = false,
+      exportFiltersMode = ExportFilterMetadataMode.None,
+    ) => {
       const logAction =
         format === 'csv'
           ? LOG_ACTIONS_EXPORT_CSV_DASHBOARD_CHART
@@ -647,6 +653,7 @@ const Chart = (props: ChartProps) => {
             exportFormData as unknown as import('@superset-ui/core').QueryFormData,
           resultType,
           resultFormat: format,
+          exportFiltersMode,
           ownState: exportOwnState,
           onStartStreamingExport: shouldUseStreaming
             ? (exportParams: JsonObject) => {
@@ -701,17 +708,26 @@ const Chart = (props: ChartProps) => {
     ],
   );
 
-  const exportCSV = useCallback(() => {
-    exportTable('csv', false);
-  }, [exportTable]);
+  const exportCSV = useCallback(
+    (exportFiltersMode?: ExportFilterMetadataMode) => {
+      exportTable('csv', false, false, exportFiltersMode);
+    },
+    [exportTable],
+  );
 
-  const exportFullCSV = useCallback(() => {
-    exportTable('csv', true);
-  }, [exportTable]);
+  const exportFullCSV = useCallback(
+    (exportFiltersMode?: ExportFilterMetadataMode) => {
+      exportTable('csv', true, false, exportFiltersMode);
+    },
+    [exportTable],
+  );
 
-  const exportPivotCSV = useCallback(() => {
-    exportTable('csv', false, true);
-  }, [exportTable]);
+  const exportPivotCSV = useCallback(
+    (exportFiltersMode?: ExportFilterMetadataMode) => {
+      exportTable('csv', false, true, exportFiltersMode);
+    },
+    [exportTable],
+  );
 
   const exportXLSX = useCallback(() => {
     exportTable('xlsx', false);
