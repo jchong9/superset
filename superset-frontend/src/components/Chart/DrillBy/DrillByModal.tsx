@@ -28,6 +28,7 @@ import {
   isDefined,
   ContextMenuFilters,
   AdhocFilter,
+  JsonObject,
 } from '@superset-ui/core';
 import { Alert } from '@apache-superset/core/components';
 import { css, useTheme } from '@apache-superset/core/theme';
@@ -58,6 +59,8 @@ import { exportChart } from 'src/explore/exploreUtils';
 import { isEmbedded } from 'src/dashboard/util/isEmbedded';
 import { useAsyncModeOverride } from 'src/utils/asyncMode';
 import { Dataset, DrillByType } from '../types';
+import { ExportFilterMetadataMode } from 'src/utils/export';
+import { getExportFilterValues } from 'src/utils/exportFilterValues';
 import DrillByChart from './DrillByChart';
 import { ContextMenuItem } from '../ChartContextMenu/ChartContextMenu';
 import { useContextMenu } from '../ChartContextMenu/useContextMenu';
@@ -375,24 +378,34 @@ export default function DrillByModal({
   ]);
 
   const handleDownload = useCallback(
-    (exportType: 'csv' | 'xlsx') => {
-      Promise.resolve(
-        exportChart({
+    async (
+      exportType: 'csv' | 'xlsx',
+      exportFiltersMode: ExportFilterMetadataMode = ExportFilterMetadataMode.None,
+    ) => {
+      try {
+        const exportFilterValues =
+          exportFiltersMode === ExportFilterMetadataMode.Separate
+            ? await getExportFilterValues(drilledFormData as JsonObject)
+            : undefined;
+        await exportChart({
           formData: drilledFormData,
           resultFormat: exportType,
           resultType: 'full',
-        }),
-      ).catch(error => {
+          exportFiltersMode,
+          ...(exportFilterValues ? { exportFilterValues } : {}),
+        });
+      } catch (error) {
         addDangerToast(
           t('Failed to generate download: %s', error?.message || error),
         );
-      });
+      }
     },
     [drilledFormData, addDangerToast],
   );
 
   const handleDownloadCSV = useCallback(
-    () => handleDownload('csv'),
+    (exportFiltersMode: ExportFilterMetadataMode) =>
+      handleDownload('csv', exportFiltersMode),
     [handleDownload],
   );
 

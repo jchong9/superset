@@ -28,15 +28,27 @@ import {
   memo,
   RefObject,
 } from 'react';
-import type { ChartCustomization, JsonObject } from '@superset-ui/core';
-import { DatasourceType, VizType } from '@superset-ui/core';
+import type {
+  ChartCustomization,
+  JsonObject,
+  QueryData,
+} from '@superset-ui/core';
+import {
+  DatasourceType,
+  VizType,
+} from '@superset-ui/core';
 import { styled } from '@apache-superset/core/theme';
 import { t } from '@apache-superset/core/translation';
-import { debounce } from 'lodash-es';
+import { debounce, uniqWith } from 'lodash-es';
 import { bindActionCreators } from 'redux';
 import { useDispatch, useSelector } from 'react-redux';
 
 import { exportChart } from 'src/explore/exploreUtils';
+import {
+  ExportFilterMetadataMode,
+  ExportFilterValue,
+} from 'src/utils/export';
+import { getExportFilterValues as getFilterValuesForExport } from 'src/utils/exportFilterValues';
 import ChartContainer from 'src/components/Chart/ChartContainer';
 import LastQueriedLabel from 'src/components/LastQueriedLabel';
 import {
@@ -84,6 +96,14 @@ import {
 } from '../../../util/activeDashboardFilters';
 import getFormDataWithExtraFilters from '../../../util/charts/getFormDataWithExtraFilters';
 import { useChartCustomizationFromRedux } from '../../nativeFilters/state';
+import {
+  Indicator,
+  IndicatorStatus,
+  selectIndicatorsForChart,
+  selectNativeIndicatorsForChart,
+} from '../../nativeFilters/selectors';
+import { getFilterValueForDisplay } from '../../nativeFilters/utils';
+import { useChartLayoutItems } from '../../../util/useChartLayoutItems';
 import { PLACEHOLDER_DATASOURCE } from '../../../constants';
 import { DashboardDatasetsContext } from '../../../contexts/DashboardDatasetsContext';
 
@@ -133,6 +153,32 @@ const SliceContainer = styled.div`
 
 const EMPTY_OBJECT: Record<string, never> = {};
 
+const getExportRowCount = (
+  queriesResponse: QueryData[] | null | undefined,
+  vizType: string,
+  rowLimit: number | undefined,
+): number | undefined => {
+  const tableData = (queriesResponse?.[1] as JsonObject | undefined)?.data;
+  const tableRowCount = Array.isArray(tableData)
+    ? (tableData[0] as JsonObject | undefined)?.rowcount
+    : undefined;
+  if (
+    (vizType === VizType.Table || vizType === VizType.TableAgGrid) &&
+    typeof tableRowCount === 'number'
+  ) {
+    return tableRowCount;
+  }
+
+  const firstQuery = queriesResponse?.[0] as JsonObject | undefined;
+  if (typeof firstQuery?.sql_rowcount === 'number') {
+    return firstQuery.sql_rowcount;
+  }
+  if (typeof firstQuery?.rowcount === 'number') {
+    return firstQuery.rowcount;
+  }
+  return rowLimit;
+};
+
 // Stable no-op fallback for optional callbacks so we don't allocate a new
 // function on every render (keeps referential equality for memoized children).
 const NOOP = () => {};
@@ -170,6 +216,24 @@ const createOwnStateWithChartState = (
     ...convertedState,
     chartState: state,
   };
+};
+
+export const getExportFilterValues = async (
+  indicators: Indicator[],
+  formData: JsonObject,
+): Promise<ExportFilterValue[]> => {
+  const pillValues = indicators.flatMap(indicator => {
+    if (
+      indicator.status !== IndicatorStatus.Applied &&
+      indicator.status !== IndicatorStatus.CrossFilterApplied
+    ) {
+      return [];
+    }
+
+    const value = getFilterValueForDisplay(indicator.value);
+    return value ? [{ label: indicator.name, value }] : [];
+  });
+  return getFilterValuesForExport(formData, pillValues);
 };
 
 const Chart = (props: ChartProps) => {
@@ -458,7 +522,14 @@ const Chart = (props: ChartProps) => {
   const nativeFilters = useSelector(
     (state: RootState) => state.nativeFilters?.filters,
   );
+  const dashboardFilters = useSelector(
+    (state: RootState) => state.dashboardFilters,
+  );
+  const dashboardDatasources = useSelector(
+    (state: RootState) => state.datasources,
+  );
   const dataMask = useSelector((state: RootState) => state.dataMask);
+  const chartLayoutItems = useChartLayoutItems();
   const dataMaskOwnState = dataMask[props.id]?.ownState;
   const chartState = useSelector(
     (state: RootState) => state.dashboardState.chartStates?.[props.id],
@@ -548,6 +619,21 @@ const Chart = (props: ChartProps) => {
 
   (formData as JsonObject).dashboardId = dashboardInfo.id;
 
+  const exportRowCount = getExportRowCount(
+    queriesResponse,
+    slice.viz_type,
+    (formData as JsonObject).row_limit as number | undefined,
+  );
+  const fullCSVExportRowCount = getExportRowCount(
+    queriesResponse,
+    slice.viz_type,
+    maxRows,
+  );
+  const separateCSVExportDisabled =
+    (exportRowCount !== undefined && exportRowCount >= streamingThreshold) ||
+    (fullCSVExportRowCount !== undefined &&
+      fullCSVExportRowCount >= streamingThreshold);
+
   // Memoize ownState so it keeps a stable reference across re-renders that
   // don't change its logical value. ViewQueryModal depends on ownState; a fresh
   // object on every render would refetch the query unnecessarily.
@@ -569,7 +655,12 @@ const Chart = (props: ChartProps) => {
   );
 
   const exportTable = useCallback(
-    async (format: string, isFullCSV: boolean, isPivot = false) => {
+    async (
+      format: string,
+      isFullCSV: boolean,
+      isPivot = false,
+      exportFiltersMode = ExportFilterMetadataMode.None,
+    ) => {
       const logAction =
         format === 'csv'
           ? LOG_ACTIONS_EXPORT_CSV_DASHBOARD_CHART
@@ -584,35 +675,17 @@ const Chart = (props: ChartProps) => {
         : formData;
       const resultType = isPivot ? 'post_processed' : 'full';
 
-      let actualRowCount: number | undefined;
-      const vizType = (formData as JsonObject)?.viz_type;
-      const isTableViz =
-        vizType === VizType.Table || vizType === VizType.TableAgGrid;
-
-      if (
-        isTableViz &&
-        queriesResponse &&
-        queriesResponse.length > 1 &&
-        (queriesResponse[1] as JsonObject)?.data?.[0]?.rowcount
-      ) {
-        actualRowCount = (
-          (queriesResponse[1] as JsonObject).data as JsonObject[]
-        )[0].rowcount as number;
-      } else if ((queriesResponse?.[0] as JsonObject)?.sql_rowcount != null) {
-        actualRowCount = (queriesResponse![0] as JsonObject)
-          .sql_rowcount as number;
-      } else if ((queriesResponse?.[0] as JsonObject)?.rowcount != null) {
-        actualRowCount = (queriesResponse![0] as JsonObject).rowcount as number;
-      } else {
-        actualRowCount = (exportFormData as JsonObject)?.row_limit as
-          | number
-          | undefined;
-      }
+      const actualRowCount = getExportRowCount(
+        queriesResponse,
+        (formData as JsonObject).viz_type as string,
+        (exportFormData as JsonObject).row_limit as number | undefined,
+      );
 
       // Handle streaming CSV exports based on row threshold
       const shouldUseStreaming =
         format === 'csv' &&
         !isPivot &&
+        exportFiltersMode !== ExportFilterMetadataMode.Separate &&
         actualRowCount !== undefined &&
         actualRowCount >= streamingThreshold;
       let filename: string | undefined;
@@ -645,13 +718,44 @@ const Chart = (props: ChartProps) => {
             }),
           }
         : baseOwnState;
-
+      const exportFilterIndicators = uniqWith(
+        [
+          ...selectIndicatorsForChart(
+            props.id,
+            dashboardFilters || {},
+            dashboardDatasources,
+            chart,
+          ),
+          ...selectNativeIndicatorsForChart(
+            nativeFilters || {},
+            dataMask,
+            props.id,
+            chart,
+            chartLayoutItems,
+            chartConfiguration,
+          ),
+        ],
+        (first, second) =>
+          first.column === second.column &&
+          first.name === second.name &&
+          (first.status !== IndicatorStatus.Applied ||
+            second.status !== IndicatorStatus.Applied),
+      );
       try {
+        const exportFilterValues =
+          exportFiltersMode === ExportFilterMetadataMode.Separate
+            ? await getExportFilterValues(
+                exportFilterIndicators,
+                exportFormData as JsonObject,
+              )
+            : undefined;
         await exportChart({
           formData:
             exportFormData as unknown as import('@superset-ui/core').QueryFormData,
           resultType,
           resultFormat: format,
+          exportFiltersMode,
+          exportFilterValues,
           ownState: exportOwnState,
           onStartStreamingExport: shouldUseStreaming
             ? (exportParams: JsonObject) => {
@@ -695,6 +799,14 @@ const Chart = (props: ChartProps) => {
       formData,
       maxRows,
       dataMaskOwnState,
+      dashboardDatasources,
+      dashboardFilters,
+      chart,
+      chartConfiguration,
+      chartLayoutItems,
+      dataMask,
+      datasource.main_dttm_col,
+      nativeFilters,
       chartState,
       props.id,
       boundActionCreators.logEvent,
@@ -706,17 +818,26 @@ const Chart = (props: ChartProps) => {
     ],
   );
 
-  const exportCSV = useCallback(() => {
-    exportTable('csv', false);
-  }, [exportTable]);
+  const exportCSV = useCallback(
+    (_sliceId: number, exportFiltersMode?: ExportFilterMetadataMode) => {
+      exportTable('csv', false, false, exportFiltersMode);
+    },
+    [exportTable],
+  );
 
-  const exportFullCSV = useCallback(() => {
-    exportTable('csv', true);
-  }, [exportTable]);
+  const exportFullCSV = useCallback(
+    (_sliceId: number, exportFiltersMode?: ExportFilterMetadataMode) => {
+      exportTable('csv', true, false, exportFiltersMode);
+    },
+    [exportTable],
+  );
 
-  const exportPivotCSV = useCallback(() => {
-    exportTable('csv', false, true);
-  }, [exportTable]);
+  const exportPivotCSV = useCallback(
+    (_sliceId: number, exportFiltersMode?: ExportFilterMetadataMode) => {
+      exportTable('csv', false, true, exportFiltersMode);
+    },
+    [exportTable],
+  );
 
   const exportXLSX = useCallback(() => {
     exportTable('xlsx', false);
@@ -825,6 +946,7 @@ const Chart = (props: ChartProps) => {
         }
         chartHolderRef={props.chartHolderRef}
         ownState={ownState}
+        separateCSVExportDisabled={separateCSVExportDisabled}
       />
 
       {/*

@@ -60,6 +60,15 @@ import TableControls from './DrillDetailTableControls';
 import { getDrillPayload } from './utils';
 import { ResultsPage } from './types';
 import { datasetLabelLower } from 'src/features/semanticLayers/label';
+import {
+  downloadBlob,
+  ExportFilterMetadataMode,
+  getFilenameFromResponse,
+} from 'src/utils/export';
+import {
+  type ExportQueryFilter,
+  getExportFilterValues,
+} from 'src/utils/exportFilterValues';
 
 const DEFAULT_PAGE_SIZE = 50;
 
@@ -230,7 +239,10 @@ export default function DrillDetailPane({
   }, []);
 
   const handleDownload = useCallback(
-    (exportType: 'csv' | 'xlsx') => {
+    async (
+      exportType: 'csv' | 'xlsx',
+      exportFiltersMode?: ExportFilterMetadataMode,
+    ) => {
       const drillPayload = getDrillPayload(formData, filters);
       if (!drillPayload) {
         addDangerToast(t('Unable to generate download payload'));
@@ -259,13 +271,36 @@ export default function DrillDetailPane({
       if (dashboardId) {
         payload.form_data = { viz_type: formData.viz_type, dashboardId };
       }
-      SupersetClient.postForm('/api/v1/chart/data', {
-        form_data: safeStringify(payload),
-      }).catch(error => {
+      if (
+        exportFiltersMode &&
+        exportFiltersMode !== ExportFilterMetadataMode.None
+      ) {
+        payload.export_filters_mode = exportFiltersMode;
+      }
+      try {
+        if (
+          exportType === 'csv' &&
+          exportFiltersMode === ExportFilterMetadataMode.Separate
+        ) {
+          payload.export_filter_values = await getExportFilterValues(
+            formData as JsonObject,
+            [],
+            filters as ExportQueryFilter[],
+          );
+        }
+        const response = await SupersetClient.postBlob('/api/v1/chart/data', {
+          form_data: safeStringify(payload),
+        });
+        const fallbackFilename = `drill_detail.${exportType}`;
+        const filename = getFilenameFromResponse(response, fallbackFilename);
+        downloadBlob(await response.blob(), filename);
+      } catch (error) {
+        const errorMessage =
+          error instanceof Error ? error.message : String(error);
         addDangerToast(
-          t('Failed to generate download: %s', error.message || error),
+          t('Failed to generate download: %s', errorMessage),
         );
-      });
+      }
     },
     [
       formData,
@@ -279,7 +314,8 @@ export default function DrillDetailPane({
   );
 
   const handleDownloadCSV = useCallback(
-    () => handleDownload('csv'),
+    (exportFiltersMode: ExportFilterMetadataMode) =>
+      handleDownload('csv', exportFiltersMode),
     [handleDownload],
   );
 

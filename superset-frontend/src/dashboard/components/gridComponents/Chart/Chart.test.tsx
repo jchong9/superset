@@ -20,6 +20,7 @@ import { useEffect } from 'react';
 import { act, fireEvent, render } from 'spec/helpers/testing-library';
 import {
   DatasourceType,
+  fetchTimeRange,
   FeatureFlag,
   TimeGranularity,
   VizType,
@@ -27,7 +28,10 @@ import {
 import * as redux from 'redux';
 
 import * as exploreUtils from 'src/explore/exploreUtils';
+import { ExportFilterMetadataMode } from 'src/utils/export';
 import * as chartStateConverter from '../../../util/chartStateConverter';
+import { getExportFilterValues } from './Chart';
+import { IndicatorStatus } from '../../nativeFilters/selectors';
 import { sliceEntitiesForChart as sliceEntities } from 'spec/fixtures/mockSliceEntities';
 import mockDatasource from 'spec/fixtures/mockDatasource';
 import chartQueries, {
@@ -44,6 +48,11 @@ import {
 } from 'src/dashboard/contexts/DashboardDatasetsContext';
 import { buildQuery as buildTableQuery } from '../../../../../plugins/plugin-chart-table/src/buildQuery';
 import type { TableChartFormData } from '../../../../../plugins/plugin-chart-table/src/types';
+
+jest.mock('@superset-ui/core', () => ({
+  ...jest.requireActual('@superset-ui/core'),
+  fetchTimeRange: jest.fn(),
+}));
 
 let capturedChartContainerProps: Record<string, unknown> = {};
 jest.mock('src/components/Chart/ChartContainer', () => {
@@ -589,7 +598,8 @@ test('should call exportChart when exportCSV is clicked', async () => {
     {},
     { timeout: 5000 },
   );
-  fireEvent.click(exportAction);
+  fireEvent.mouseOver(exportAction);
+  fireEvent.click(await findByText('Without filter metadata'));
   expect(stubbedExportCSV).toHaveBeenCalledTimes(1);
   expect(stubbedExportCSV).toHaveBeenCalledWith(
     expect.objectContaining({
@@ -598,9 +608,100 @@ test('should call exportChart when exportCSV is clicked', async () => {
       }),
       resultType: 'full',
       resultFormat: 'csv',
+      exportFiltersMode: ExportFilterMetadataMode.None,
     }),
   );
   stubbedExportCSV.mockRestore();
+});
+
+test('should export filters separately when selected from the dashboard', async () => {
+  const stubbedExportCSV = jest
+    .spyOn(exploreUtils, 'exportChart')
+    .mockImplementation((() => {}) as any);
+  const { findByText, getByRole } = setup(
+    {},
+    {
+      dashboardInfo: {
+        ...defaultState.dashboardInfo,
+        superset_can_download: true,
+      },
+    },
+  );
+  fireEvent.click(getByRole('button', { name: 'More Options' }));
+  fireEvent.mouseOver(getByRole('menuitem', { name: 'Download right' }));
+  fireEvent.mouseOver(
+    await findByText('Export to .CSV', {}, { timeout: 5000 }),
+  );
+  fireEvent.click(
+    await findByText('Include filters as a separate file'),
+  );
+
+  expect(stubbedExportCSV).toHaveBeenCalledTimes(1);
+  expect(stubbedExportCSV).toHaveBeenCalledWith(
+    expect.objectContaining({
+      resultFormat: 'csv',
+      exportFiltersMode: ExportFilterMetadataMode.Separate,
+      exportFilterValues: [],
+    }),
+  );
+  stubbedExportCSV.mockRestore();
+});
+
+test('builds export values from applied filter pills', async () => {
+  expect(
+    await getExportFilterValues(
+      [
+        {
+          name: 'Date',
+          value: '2026-01-01 ≤ dttm < 2026-01-02',
+          status: IndicatorStatus.Applied,
+        },
+        {
+          name: 'Region',
+          value: 'North, South',
+          status: IndicatorStatus.CrossFilterApplied,
+        },
+        {
+          name: 'Unset',
+          value: null,
+          status: IndicatorStatus.Unset,
+        },
+      ],
+      { granularity_sqla: 'dttm' },
+    ),
+  ).toEqual([
+    { label: 'Date', value: '2026-01-01 ≤ dttm < 2026-01-02' },
+    { label: 'Region', value: 'North, South' },
+  ]);
+});
+
+test('uses the rendered time-range label for temporal adhoc filter pills', async () => {
+  (fetchTimeRange as jest.Mock).mockResolvedValueOnce({
+    value: '2026-01-01 ≤ dttm < 2026-01-02',
+  });
+
+  await expect(
+    getExportFilterValues(
+      [],
+      {
+        adhoc_filters: [
+          {
+            expressionType: 'SIMPLE',
+            subject: 'dttm',
+            operator: 'TEMPORAL_RANGE',
+            comparator: '2026-01-01 : 2026-01-02',
+            clause: 'WHERE',
+          },
+        ],
+      },
+    ),
+  ).resolves.toEqual([
+    { label: 'dttm', value: '2026-01-01 ≤ dttm < 2026-01-02' },
+  ]);
+  expect(fetchTimeRange).toHaveBeenCalledWith(
+    '2026-01-01 : 2026-01-02',
+    'dttm',
+  );
 });
 
 test('should call exportChart with row_limit props.maxRows when exportFullCSV is clicked', async () => {

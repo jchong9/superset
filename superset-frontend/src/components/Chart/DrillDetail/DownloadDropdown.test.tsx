@@ -40,10 +40,11 @@ test('renders a download trigger with accessible label', () => {
   expect(screen.getByRole('button', { name: 'Download' })).toBeInTheDocument();
 });
 
-test('fires onDownloadCSV when CSV menu item is selected', async () => {
+test('fires onDownloadCSV when a CSV export mode is selected', async () => {
   setup();
   await userEvent.click(screen.getByRole('button', { name: 'Download' }));
-  await userEvent.click(await screen.findByText('Export to CSV'));
+  await userEvent.hover(await screen.findByText('Export to CSV'));
+  await userEvent.click(await screen.findByText('Without filter metadata'));
   expect(onDownloadCSV).toHaveBeenCalledTimes(1);
   expect(onDownloadXLSX).not.toHaveBeenCalled();
 });

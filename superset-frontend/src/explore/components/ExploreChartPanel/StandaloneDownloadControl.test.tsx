@@ -20,6 +20,7 @@
 import { render, screen, userEvent } from 'spec/helpers/testing-library';
 import { VizType } from '@superset-ui/core';
 import { ExportStatus } from 'src/components/StreamingExportModal/StreamingExportModal';
+import { ExportFilterMetadataMode } from 'src/utils/export';
 import { useExploreDataExport } from '../useExploreAdditionalActionsMenu/useExploreDataExport';
 import StandaloneDownloadControl from './StandaloneDownloadControl';
 
@@ -110,9 +111,28 @@ describe('StandaloneDownloadControl', () => {
     );
 
     await userEvent.click(screen.getByTestId('standalone-download-button'));
-    await userEvent.click(await screen.findByText('Export to .CSV'));
+    await userEvent.hover(await screen.findByText('Export to .CSV'));
+    await userEvent.click(await screen.findByText('Without filter metadata'));
 
-    expect(exportCSV).toHaveBeenCalledTimes(1);
+    expect(exportCSV).toHaveBeenCalledWith(ExportFilterMetadataMode.None);
+  });
+
+  test('exports CSV with separate filter metadata when selected', async () => {
+    render(
+      <StandaloneDownloadControl
+        latestQueryFormData={latestQueryFormData}
+        canDownload
+      />,
+      { useRedux: true },
+    );
+
+    await userEvent.click(screen.getByTestId('standalone-download-button'));
+    await userEvent.hover(await screen.findByText('Export to .CSV'));
+    await userEvent.click(
+      await screen.findByText('Include filters as a separate file'),
+    );
+
+    expect(exportCSV).toHaveBeenCalledWith(ExportFilterMetadataMode.Separate);
   });
 
   test('exports JSON when JSON option is clicked', async () => {

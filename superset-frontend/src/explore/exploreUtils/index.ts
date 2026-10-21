@@ -34,7 +34,12 @@ import { availableDomains } from 'src/utils/hostNamesConfig';
 import { safeStringify } from 'src/utils/safeStringify';
 import { optionLabel } from 'src/utils/common';
 import { ensureAppRoot } from 'src/utils/navigationUtils';
-import { downloadBlob, getFilenameFromResponse } from 'src/utils/export';
+import {
+  downloadBlob,
+  ExportFilterValue,
+  ExportFilterMetadataMode,
+  getFilenameFromResponse,
+} from 'src/utils/export';
 import { URL_PARAMS } from 'src/constants';
 import {
   DISABLE_INPUT_OPERATORS,
@@ -90,6 +95,8 @@ interface BuildV1ChartDataPayloadParams {
   resultType?: string;
   setDataMask?: SetDataMaskHook;
   ownState?: JsonObject;
+  exportFiltersMode?: ExportFilterMetadataMode;
+  exportFilterValues?: ExportFilterValue[];
 }
 
 interface ExportChartParams {
@@ -98,6 +105,9 @@ interface ExportChartParams {
   resultType?: string;
   force?: boolean;
   ownState?: JsonObject;
+  /** Request filter metadata for CSV exports; only separate-file mode is supported. */
+  exportFiltersMode?: ExportFilterMetadataMode;
+  exportFilterValues?: ExportFilterValue[];
   onStartStreamingExport?:
     | ((params: {
         url: string | null;
@@ -295,6 +305,8 @@ export const buildV1ChartDataPayload = async ({
   resultType,
   setDataMask,
   ownState,
+  exportFiltersMode = ExportFilterMetadataMode.None,
+  exportFilterValues,
 }: BuildV1ChartDataPayloadParams): Promise<
   ReturnType<typeof buildQueryContext>
 > => {
@@ -324,6 +336,13 @@ export const buildV1ChartDataPayload = async ({
       },
     },
   );
+  if (exportFiltersMode !== ExportFilterMetadataMode.None) {
+    // This is a request-level option; it is not part of the query context.
+    (payload as JsonObject).export_filters_mode = exportFiltersMode;
+  }
+  if (exportFilterValues) {
+    (payload as JsonObject).export_filter_values = exportFilterValues;
+  }
   // Stamp each query with its forced-refresh nonce (its async task's UUID, from
   // the 202 `task_ids`, index-aligned to queries) for the synchronous read-back.
   if (queryForceNonces?.length && Array.isArray(payload.queries)) {
@@ -344,6 +363,8 @@ export const exportChart = async ({
   resultType = 'full',
   force = false,
   ownState = {},
+  exportFiltersMode = ExportFilterMetadataMode.None,
+  exportFilterValues,
   onStartStreamingExport = null,
 }: ExportChartParams): Promise<void> => {
   const url = '/api/v1/chart/data';
@@ -353,6 +374,8 @@ export const exportChart = async ({
     resultFormat,
     resultType,
     ownState,
+    exportFiltersMode,
+    exportFilterValues,
   });
 
   // Check if streaming export handler is provided (from dashboard Chart.jsx)

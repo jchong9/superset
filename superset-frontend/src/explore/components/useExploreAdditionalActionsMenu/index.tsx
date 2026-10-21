@@ -76,6 +76,8 @@ import ViewQueryModal from '../controls/ViewQueryModal';
 import EmbedCodeContent from '../EmbedCodeContent';
 import { useDashboardsMenuItems } from './DashboardsSubMenu';
 import { useExploreDataExport } from './useExploreDataExport';
+import { ExportFilterMetadataMode } from 'src/utils/export';
+import { DEFAULT_CSV_STREAMING_ROW_THRESHOLD } from 'src/constants';
 
 export const SEARCH_THRESHOLD = 10;
 
@@ -156,6 +158,40 @@ const MENU_KEYS = {
 };
 
 const VIZ_TYPES_PIVOTABLE = [VizType.PivotTable];
+
+const exportFiltersMenuItems = (
+  exportType: string,
+  onExport: (mode: ExportFilterMetadataMode) => void,
+  separateDisabled = false,
+) => [
+  {
+    key: `${exportType}-none`,
+    label: t('Without filter metadata'),
+    onClick: () => onExport(ExportFilterMetadataMode.None),
+  },
+  {
+    key: `${exportType}-inline`,
+    label: t('Include filters in metadata comments'),
+    onClick: () => onExport(ExportFilterMetadataMode.Inline),
+  },
+  {
+    key: `${exportType}-separate`,
+    label: separateDisabled ? (
+      <span>
+        {t('Include filters as a separate file')}
+        <MenuItemTooltip
+          title={t(
+            'Separate filter files are unavailable for streamed CSV exports.',
+          )}
+        />
+      </span>
+    ) : (
+      t('Include filters as a separate file')
+    ),
+    disabled: separateDisabled,
+    onClick: () => onExport(ExportFilterMetadataMode.Separate),
+  },
+];
 
 // Data and PDF exports, dropped from the menu of image-only charts (see isImageOnlyExportViz).
 const DATA_AND_PDF_EXPORT_KEYS: string[] = [
@@ -390,6 +426,23 @@ export const useExploreAdditionalActionsMenu = (
   const chart = useSelector<ExploreState, ChartState | undefined>(state =>
     state.explore ? state.charts?.[getChartKey(state.explore)] : undefined,
   );
+  const csvStreamingThreshold = useSelector<ExploreState, number>(
+    state =>
+      state.common?.conf?.CSV_STREAMING_ROW_THRESHOLD ||
+      DEFAULT_CSV_STREAMING_ROW_THRESHOLD,
+  );
+  const isTableViz = latestQueryFormData?.viz_type === 'table';
+  const csvRowCount =
+    isTableViz &&
+    chart?.queriesResponse &&
+    chart.queriesResponse.length > 1 &&
+    chart.queriesResponse[1]?.data?.[0]?.rowcount
+      ? chart.queriesResponse[1].data[0].rowcount
+      : (chart?.queriesResponse?.[0]?.sql_rowcount ??
+        chart?.queriesResponse?.[0]?.rowcount ??
+        latestQueryFormData?.row_limit);
+  const separateFiltersUnavailable =
+    typeof csvRowCount === 'number' && csvRowCount >= csvStreamingThreshold;
   const exploreChartState = useSelector<ExploreState, JsonObject | undefined>(
     state => {
       const chartKey = state.explore ? getChartKey(state.explore) : undefined;
@@ -692,6 +745,19 @@ export const useExploreAdditionalActionsMenu = (
 
   const menu = useMemo(() => {
     const menuItems = [];
+    const createCSVExportHandler = (
+      onExport: (mode: ExportFilterMetadataMode) => Promise<unknown>,
+      action: string,
+    ) => async (mode: ExportFilterMetadataMode) => {
+      await onExport(mode);
+      setIsDropdownVisible(false);
+      dispatch(
+        logEvent(action, {
+          chartId: slice?.slice_id,
+          chartName: slice?.slice_name,
+        }),
+      );
+    };
 
     // Edit chart properties
     if (slice && canEditProperties) {
@@ -762,32 +828,28 @@ export const useExploreAdditionalActionsMenu = (
           label: dataExportLabel(t('Export to original .CSV')),
           icon: <Icons.FileOutlined />,
           disabled: !canDownloadCSV,
-          onClick: () => {
-            exportCSV();
-            setIsDropdownVisible(false);
-            dispatch(
-              logEvent(LOG_ACTIONS_CHART_DOWNLOAD_AS_CSV, {
-                chartId: slice?.slice_id,
-                chartName: slice?.slice_name,
-              }),
-            );
-          },
+          children: exportFiltersMenuItems(
+            'explore-original',
+            createCSVExportHandler(
+              exportCSV,
+              LOG_ACTIONS_CHART_DOWNLOAD_AS_CSV,
+            ),
+            separateFiltersUnavailable,
+          ),
         },
         {
           key: MENU_KEYS.EXPORT_TO_CSV_PIVOTED,
           label: dataExportLabel(t('Export to pivoted .CSV')),
           icon: <Icons.FileOutlined />,
           disabled: !canDownloadCSV,
-          onClick: () => {
-            exportCSVPivoted();
-            setIsDropdownVisible(false);
-            dispatch(
-              logEvent(LOG_ACTIONS_CHART_DOWNLOAD_AS_CSV_PIVOTED, {
-                chartId: slice?.slice_id,
-                chartName: slice?.slice_name,
-              }),
-            );
-          },
+          children: exportFiltersMenuItems(
+            'explore-pivoted',
+            createCSVExportHandler(
+              exportCSVPivoted,
+              LOG_ACTIONS_CHART_DOWNLOAD_AS_CSV_PIVOTED,
+            ),
+            separateFiltersUnavailable,
+          ),
         },
         {
           key: MENU_KEYS.EXPORT_TO_PIVOT_XLSX,
@@ -817,16 +879,11 @@ export const useExploreAdditionalActionsMenu = (
         label: dataExportLabel(t('Export to .CSV')),
         icon: <Icons.FileOutlined />,
         disabled: !canDownloadCSV,
-        onClick: () => {
-          exportCSV();
-          setIsDropdownVisible(false);
-          dispatch(
-            logEvent(LOG_ACTIONS_CHART_DOWNLOAD_AS_CSV, {
-              chartId: slice?.slice_id,
-              chartName: slice?.slice_name,
-            }),
-          );
-        },
+        children: exportFiltersMenuItems(
+          'explore',
+          createCSVExportHandler(exportCSV, LOG_ACTIONS_CHART_DOWNLOAD_AS_CSV),
+          separateFiltersUnavailable,
+        ),
       });
     }
 
@@ -907,40 +964,30 @@ export const useExploreAdditionalActionsMenu = (
         label: dataExportLabel(t('Export to .CSV')),
         icon: <Icons.FileOutlined />,
         disabled: !canDownloadCSV,
-        onClick: async () => {
-          // Use 'results' to export the *current view* (as opposed to 'full').
-          // Pass ownState so client/UI state (e.g., filters) can be respected when supported.
-          if (
-            !latestQueryFormData?.server_pagination &&
-            ownState?.clientView &&
-            ownState.clientView.columns?.length
-          ) {
-            const { rows = [], columns = [] } = ownState.clientView;
-            downloadClientCSV(
-              rows,
-              columns,
-              slice?.slice_name || 'current_view',
-            );
-          } else {
-            try {
-              await exportChart({
-                formData: latestQueryFormData as QueryFormData,
-                ownState,
-                resultType: 'results',
-                resultFormat: 'csv',
-              });
-            } catch (error) {
-              handleExportError(error);
-            }
-          }
-          setIsDropdownVisible(false);
-          dispatch(
-            logEvent(LOG_ACTIONS_CHART_DOWNLOAD_AS_CSV, {
-              chartId: slice?.slice_id,
-              chartName: slice?.slice_name,
-            }),
-          );
-        },
+        children: exportFiltersMenuItems(
+          'explore-current-view',
+          createCSVExportHandler(
+            async mode => {
+              if (
+                mode === ExportFilterMetadataMode.None &&
+                !latestQueryFormData?.server_pagination &&
+                ownState?.clientView &&
+                ownState.clientView.columns?.length
+              ) {
+                const { rows = [], columns = [] } = ownState.clientView;
+                downloadClientCSV(
+                  rows,
+                  columns,
+                  slice?.slice_name || 'current_view',
+                );
+              } else {
+                await exportCSV(mode);
+              }
+            },
+            LOG_ACTIONS_CHART_DOWNLOAD_AS_CSV,
+          ),
+          separateFiltersUnavailable,
+        ),
       },
       {
         key: MENU_KEYS.EXPORT_CURRENT_TO_JSON,

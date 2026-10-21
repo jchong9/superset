@@ -262,7 +262,8 @@ test('shows 413 error toast when exportCSV fails with 413', async () => {
 
   await userEvent.hover(await screen.findByText('Data Export Options'));
   await userEvent.hover(await screen.findByText('Export All Data'));
-  await userEvent.click(await screen.findByText('Export to original .CSV'));
+  await userEvent.hover(await screen.findByText('Export to original .CSV'));
+  await userEvent.click(await screen.findByText('Without filter metadata'));
 
   await waitFor(() => {
     expect(mockAddDangerToast).toHaveBeenCalledWith(
@@ -278,7 +279,8 @@ test('shows 413 error toast when exportCSVPivoted fails with 413', async () => {
 
   await userEvent.hover(await screen.findByText('Data Export Options'));
   await userEvent.hover(await screen.findByText('Export All Data'));
-  await userEvent.click(await screen.findByText('Export to pivoted .CSV'));
+  await userEvent.hover(await screen.findByText('Export to pivoted .CSV'));
+  await userEvent.click(await screen.findByText('Without filter metadata'));
 
   await waitFor(() => {
     expect(mockAddDangerToast).toHaveBeenCalledWith(
@@ -304,7 +306,8 @@ test('shows 413 error toast when Export Current View CSV server path fails with 
 
   await userEvent.hover(await screen.findByText('Data Export Options'));
   await userEvent.hover(await screen.findByText('Export Current View'));
-  await userEvent.click(await screen.findByText('Export to .CSV'));
+  await userEvent.hover(await screen.findByText('Export to .CSV'));
+  await userEvent.click(await screen.findByText('Without filter metadata'));
 
   await waitFor(() => {
     expect(mockAddDangerToast).toHaveBeenCalledWith(
@@ -335,7 +338,8 @@ test('Export Current View CSV takes the client path for a filter that matches ze
 
   await userEvent.hover(await screen.findByText('Data Export Options'));
   await userEvent.hover(await screen.findByText('Export Current View'));
-  await userEvent.click(await screen.findByText('Export to .CSV'));
+  await userEvent.hover(await screen.findByText('Export to .CSV'));
+  await userEvent.click(await screen.findByText('Without filter metadata'));
 
   // The client path builds and clicks a download link directly rather than
   // calling exportChart; asserting exportChart was never called is what
@@ -343,6 +347,26 @@ test('Export Current View CSV takes the client path for a filter that matches ze
   // about the empty client-side filter and would export every row).
   await waitFor(() => {
     expect(mockExportChart).not.toHaveBeenCalled();
+  });
+});
+
+test('separate CSV export invokes exactly one download action', async () => {
+  render(<TestComponent {...defaultProps} />, { useRedux: true });
+
+  await userEvent.hover(await screen.findByText('Data Export Options'));
+  await userEvent.hover(await screen.findByText('Export All Data'));
+  await userEvent.hover(await screen.findByText('Export to original .CSV'));
+  await userEvent.click(
+    await screen.findByText('Include filters as a separate file'),
+  );
+
+  await waitFor(() => {
+    expect(mockExportChart).toHaveBeenCalledTimes(1);
+    expect(mockExportChart).toHaveBeenCalledWith(
+      expect.objectContaining({
+        exportFiltersMode: 'separate',
+      }),
+    );
   });
 });
 

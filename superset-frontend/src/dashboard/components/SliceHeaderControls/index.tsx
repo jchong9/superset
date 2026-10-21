@@ -74,6 +74,8 @@ import { useCrossFiltersScopingModal } from '../nativeFilters/FilterBar/CrossFil
 import { ViewResultsModalTrigger } from './ViewResultsModalTrigger';
 import { Global } from '@emotion/react';
 import { fullscreenStyles } from './Styles';
+import { ExportFilterMetadataMode } from 'src/utils/export';
+import { MenuItemTooltip } from 'src/components/Chart/DisabledMenuItemTooltip';
 
 const RefreshTooltip = styled.div`
   ${({ theme }) => css`
@@ -133,9 +135,18 @@ export interface SliceHeaderControlsProps {
   logExploreChart?: (sliceId: number) => void;
   logEvent?: (eventName: string, eventData?: object) => void;
   toggleExpandSlice?: (sliceId: number) => void;
-  exportCSV?: (sliceId: number) => void;
-  exportPivotCSV?: (sliceId: number) => void;
-  exportFullCSV?: (sliceId: number) => void;
+  exportCSV?: (
+    sliceId: number,
+    exportFiltersMode?: ExportFilterMetadataMode,
+  ) => void;
+  exportPivotCSV?: (
+    sliceId: number,
+    exportFiltersMode?: ExportFilterMetadataMode,
+  ) => void;
+  exportFullCSV?: (
+    sliceId: number,
+    exportFiltersMode?: ExportFilterMetadataMode,
+  ) => void;
   exportXLSX?: (sliceId: number) => void;
   exportFullXLSX?: (sliceId: number) => void;
   handleToggleFullSize: () => void;
@@ -152,6 +163,7 @@ export interface SliceHeaderControlsProps {
   crossFiltersEnabled?: boolean;
 
   ownState?: JsonObject;
+  separateCSVExportDisabled?: boolean;
 }
 type SliceHeaderControlsPropsWithRouter = SliceHeaderControlsProps &
   RouteComponentProps;
@@ -168,6 +180,38 @@ const queueChartResize = () => {
     window.dispatchEvent(new Event('resize'));
   }, 300);
 };
+
+const getExportFilterLabel = (mode: ExportFilterMetadataMode): string => {
+  switch (mode) {
+    case ExportFilterMetadataMode.None:
+      return t('Without filter metadata');
+    case ExportFilterMetadataMode.Inline:
+      return t('Include filters in metadata comments');
+    case ExportFilterMetadataMode.Separate:
+      return t('Include filters as a separate file');
+    default:
+      return mode;
+  }
+};
+
+const getExportFilterMenuItems = (exportType: string, separateDisabled: boolean) =>
+  Object.values(ExportFilterMetadataMode).map(mode => ({
+    key: `${exportType}-${mode}`,
+    label:
+      mode === ExportFilterMetadataMode.Separate && separateDisabled ? (
+        <span>
+          {getExportFilterLabel(mode)}
+          <MenuItemTooltip
+            title={t(
+              'Separate filter files are unavailable for streamed CSV exports.',
+            )}
+          />
+        </span>
+      ) : (
+        getExportFilterLabel(mode)
+      ),
+    disabled: mode === ExportFilterMetadataMode.Separate && separateDisabled,
+  }));
 
 const extensionsRegistry = getExtensionsRegistry();
 
@@ -288,14 +332,6 @@ const SliceHeaderControls = (
           history.push(props.exploreUrl);
         }
         break;
-      case MenuKeys.ExportCsv:
-        // eslint-disable-next-line no-unused-expressions
-        props.exportCSV?.(props.slice.slice_id);
-        break;
-      case MenuKeys.ExportPivotCsv:
-        // eslint-disable-next-line no-unused-expressions
-        props.exportPivotCSV?.(props.slice.slice_id);
-        break;
       case MenuKeys.Fullscreen: {
         if (props.isFullSize) {
           if (document.fullscreenElement) {
@@ -309,10 +345,6 @@ const SliceHeaderControls = (
         }
         break;
       }
-      case MenuKeys.ExportFullCsv:
-        // eslint-disable-next-line no-unused-expressions
-        props.exportFullCSV?.(props.slice.slice_id);
-        break;
       case MenuKeys.ExportFullXlsx:
         // eslint-disable-next-line no-unused-expressions
         props.exportFullXLSX?.(props.slice.slice_id);
@@ -438,8 +470,28 @@ const SliceHeaderControls = (
         }
         break;
       }
-      default:
+      default: {
+        if (typeof key !== 'string') {
+          break;
+        }
+        const exportSelection = key.match(
+          /^(dashboard-csv|dashboard-pivot-csv|dashboard-full-csv)-(none|inline|separate)$/,
+        );
+        if (!exportSelection) {
+          break;
+        }
+
+        const [, exportType, mode] = exportSelection;
+        const exportMode = mode as ExportFilterMetadataMode;
+        if (exportType === 'dashboard-csv') {
+          props.exportCSV?.(props.slice.slice_id, exportMode);
+        } else if (exportType === 'dashboard-pivot-csv') {
+          props.exportPivotCSV?.(props.slice.slice_id, exportMode);
+        } else {
+          props.exportFullCSV?.(props.slice.slice_id, exportMode);
+        }
         break;
+      }
     }
     setIsDropdownVisible(false);
   };
@@ -687,6 +739,10 @@ const SliceHeaderControls = (
                 key: MenuKeys.ExportCsv,
                 label: t('Export to .CSV'),
                 icon: <Icons.FileOutlined css={dropdownIconsStyles} />,
+                children: getExportFilterMenuItems(
+                  'dashboard-csv',
+                  props.separateCSVExportDisabled ?? false,
+                ),
               },
             ]),
         ...(isPivotTable
@@ -695,6 +751,10 @@ const SliceHeaderControls = (
                 key: MenuKeys.ExportPivotCsv,
                 label: t('Export to Pivoted .CSV'),
                 icon: <Icons.FileOutlined css={dropdownIconsStyles} />,
+                children: getExportFilterMenuItems(
+                  'dashboard-pivot-csv',
+                  false,
+                ),
               },
               {
                 key: MenuKeys.ExportPivotXlsx,
@@ -720,6 +780,10 @@ const SliceHeaderControls = (
                 key: MenuKeys.ExportFullCsv,
                 label: t('Export to full .CSV'),
                 icon: <Icons.FileOutlined css={dropdownIconsStyles} />,
+                children: getExportFilterMenuItems(
+                  'dashboard-full-csv',
+                  props.separateCSVExportDisabled ?? false,
+                ),
               },
               {
                 key: MenuKeys.ExportFullXlsx,

@@ -16,80 +16,59 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-import { ReactChild, useCallback, Key } from 'react';
+import type { ReactChild } from 'react';
 
 import { t } from '@apache-superset/core/translation';
-import { styled } from '@apache-superset/core/theme';
-import { Icons } from '@superset-ui/core/components/Icons';
 import { Dropdown } from '@superset-ui/core/components';
-
-enum MenuKeys {
-  ExportOriginal = 'export_original',
-  ExportPivoted = 'export_pivoted',
-}
+import { ExportFilterMetadataMode } from 'src/utils/export';
 
 interface ExportToCSVButtonProps {
-  exportCSVOriginal: () => void;
-  exportCSVPivoted: () => void;
+  exportCSVOriginal: (mode: ExportFilterMetadataMode) => void;
+  exportCSVPivoted: (mode: ExportFilterMetadataMode) => void;
   children: ReactChild;
 }
 
-const MenuItemContent = styled.div`
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-
-  span[role='img'] {
-    font-size: ${({ theme }) => theme.fontSizeLG}px;
-    margin-left: ${({ theme }) => theme.sizeUnit * 4}px;
-  }
-`;
+const metadataItems = (
+  exportType: string,
+  onExport: (mode: ExportFilterMetadataMode) => void,
+) => [
+  {
+    key: `${exportType}-none`,
+    label: t('Without filter metadata'),
+    onClick: () => onExport(ExportFilterMetadataMode.None),
+  },
+  {
+    key: `${exportType}-inline`,
+    label: t('Include filters in metadata comments'),
+    onClick: () => onExport(ExportFilterMetadataMode.Inline),
+  },
+  {
+    key: `${exportType}-separate`,
+    label: t('Include filters as a separate file'),
+    onClick: () => onExport(ExportFilterMetadataMode.Separate),
+  },
+];
 
 export const ExportToCSVDropdown = ({
   exportCSVOriginal,
   exportCSVPivoted,
   children,
 }: ExportToCSVButtonProps) => {
-  const handleMenuClick = useCallback(
-    ({ key }: { key: Key }) => {
-      switch (key) {
-        case MenuKeys.ExportOriginal:
-          exportCSVOriginal();
-          break;
-        case MenuKeys.ExportPivoted:
-          exportCSVPivoted();
-          break;
-        default:
-          break;
-      }
-    },
-    [exportCSVPivoted, exportCSVOriginal],
-  );
-
   return (
     <Dropdown
       trigger={['click']}
       menu={{
-        onClick: handleMenuClick,
         selectable: false,
         items: [
           {
-            key: MenuKeys.ExportOriginal,
-            label: (
-              <MenuItemContent>
-                {t('Original')}
-                <Icons.DownloadOutlined />
-              </MenuItemContent>
-            ),
+            key: 'export_original',
+            label: t('Original'),
+            children: metadataItems('original', exportCSVOriginal),
           },
           {
-            key: MenuKeys.ExportPivoted,
-            label: (
-              <MenuItemContent>
-                {t('Pivoted')}
-                <Icons.DownloadOutlined />
-              </MenuItemContent>
-            ),
+            key: 'export_pivoted',
+            label: t('Pivoted'),
+            children: metadataItems('pivoted', exportCSVPivoted),
           },
         ],
       }}

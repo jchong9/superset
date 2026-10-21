@@ -33,6 +33,8 @@ import {
 import { getMockStoreWithNativeFilters } from 'spec/fixtures/mockStore';
 import chartQueries, { sliceId } from 'spec/fixtures/mockChartQueries';
 import { supersetGetCache } from 'src/utils/cachedSupersetGet';
+import { ExportFilterMetadataMode } from 'src/utils/export';
+import * as exportUtils from 'src/utils/export';
 import DrillDetailPane from './DrillDetailPane';
 
 const chart = chartQueries[sliceId];
@@ -288,10 +290,12 @@ test('should render the error', async () => {
 });
 
 describe('download actions', () => {
-  const renderWithDownloadPermission = () =>
+  const renderWithDownloadPermission = (
+    initialFilters: BinaryQueryObjectFilterClause[] = [],
+  ) =>
     render(
       <DrillDetailPane
-        initialFilters={[]}
+        initialFilters={initialFilters}
         formData={chart.form_data as unknown as QueryFormData}
       />,
       {
@@ -304,24 +308,37 @@ describe('download actions', () => {
       },
     );
 
+  const mockPostBlobResponse = () =>
+    ({
+      headers: { get: () => null },
+      blob: () => Promise.resolve(new Blob()),
+    }) as Response;
+
   const clickDownloadItem = async (label: string) => {
     await userEvent.click(
       await screen.findByRole('button', { name: 'Download' }),
     );
-    await userEvent.click(await screen.findByText(label));
+    const item = await screen.findByText(label);
+    if (label === 'Export to CSV') {
+      await userEvent.hover(item);
+      await userEvent.click(await screen.findByText('Without filter metadata'));
+    } else {
+      await userEvent.click(item);
+    }
   };
 
   test('CSV export posts drill_detail payload with ROW_LIMIT', async () => {
     fetchWithData();
-    const postFormSpy = jest
-      .spyOn(SupersetClient, 'postForm')
-      .mockImplementation(() => Promise.resolve());
+    const postBlobSpy = jest
+      .spyOn(SupersetClient, 'postBlob')
+      .mockResolvedValue(mockPostBlobResponse());
+    jest.spyOn(exportUtils, 'downloadBlob').mockImplementation(jest.fn());
     renderWithDownloadPermission();
 
     await clickDownloadItem('Export to CSV');
 
-    expect(postFormSpy).toHaveBeenCalledTimes(1);
-    const body = postFormSpy.mock.calls[0][1] as { form_data: string };
+    expect(postBlobSpy).toHaveBeenCalledTimes(1);
+    const body = postBlobSpy.mock.calls[0][1] as { form_data: string };
     const payload = JSON.parse(body.form_data);
     expect(payload.result_type).toBe('drill_detail');
     expect(payload.result_format).toBe('csv');
@@ -330,23 +347,60 @@ describe('download actions', () => {
       dashboardId: 123,
       viz_type: chart.form_data.viz_type,
     });
-    postFormSpy.mockRestore();
+    postBlobSpy.mockRestore();
+  });
+
+  test('CSV export includes the selected filter metadata mode', async () => {
+    fetchWithData();
+    const postBlobSpy = jest
+      .spyOn(SupersetClient, 'postBlob')
+      .mockResolvedValue(mockPostBlobResponse());
+    jest.spyOn(exportUtils, 'downloadBlob').mockImplementation(jest.fn());
+    renderWithDownloadPermission([
+      {
+        col: 'dttm',
+        op: 'TEMPORAL_RANGE',
+        val: '2026-01-01 : 2026-01-02',
+        formattedVal: '2026-01-01 ≤ dttm < 2026-01-02',
+      },
+    ]);
+
+    await userEvent.click(
+      await screen.findByRole('button', { name: 'Download' }),
+    );
+    await userEvent.hover(await screen.findByText('Export to CSV'));
+    await userEvent.click(
+      await screen.findByText('Include filters as a separate file'),
+    );
+
+    expect(postBlobSpy).toHaveBeenCalledTimes(1);
+    const body = postBlobSpy.mock.calls[0][1] as { form_data: string };
+    const payload = JSON.parse(body.form_data);
+    expect(payload.export_filters_mode).toBe(
+      ExportFilterMetadataMode.Separate,
+    );
+    expect(payload.export_filter_values).toContainEqual({
+      label: 'dttm',
+      value: '2026-01-01 ≤ dttm < 2026-01-02',
+    });
+    postBlobSpy.mockRestore();
   });
 
   test('XLSX export uses xlsx result_format', async () => {
     fetchWithData();
-    const postFormSpy = jest
-      .spyOn(SupersetClient, 'postForm')
-      .mockImplementation(() => Promise.resolve());
+    const postBlobSpy = jest
+      .spyOn(SupersetClient, 'postBlob')
+      .mockResolvedValue(mockPostBlobResponse());
+    jest.spyOn(exportUtils, 'downloadBlob').mockImplementation(jest.fn());
     renderWithDownloadPermission();
 
     await clickDownloadItem('Export to Excel');
 
-    expect(postFormSpy).toHaveBeenCalledTimes(1);
-    const body = postFormSpy.mock.calls[0][1] as { form_data: string };
+    expect(postBlobSpy).toHaveBeenCalledTimes(1);
+    const body = postBlobSpy.mock.calls[0][1] as { form_data: string };
     const payload = JSON.parse(body.form_data);
     expect(payload.result_format).toBe('xlsx');
-    postFormSpy.mockRestore();
+    postBlobSpy.mockRestore();
   });
 });
 
@@ -548,9 +602,13 @@ test.each([
   async (label, format) => {
     jest.restoreAllMocks();
     fetchWithData();
-    const postFormSpy = jest
-      .spyOn(SupersetClient, 'postForm')
-      .mockResolvedValue();
+    const postBlobSpy = jest
+      .spyOn(SupersetClient, 'postBlob')
+      .mockResolvedValue({
+        headers: { get: () => null },
+        blob: () => Promise.resolve(new Blob()),
+      } as Response);
+    jest.spyOn(exportUtils, 'downloadBlob').mockImplementation(jest.fn());
     render(
       <DrillDetailPane
         initialFilters={[]}
@@ -573,12 +631,17 @@ test.each([
     await userEvent.click(
       await screen.findByRole('button', { name: 'Download' }),
     );
-    await userEvent.click(await screen.findByText(label));
-    expect(postFormSpy).toHaveBeenCalledTimes(1);
-    const body = postFormSpy.mock.calls[0][1] as { form_data: string };
+    if (label === 'Export to CSV') {
+      await userEvent.hover(await screen.findByText(label));
+      await userEvent.click(await screen.findByText('Without filter metadata'));
+    } else {
+      await userEvent.click(await screen.findByText(label));
+    }
+    expect(postBlobSpy).toHaveBeenCalledTimes(1);
+    const body = postBlobSpy.mock.calls[0][1] as { form_data: string };
     const payload = JSON.parse(body.form_data);
     expect(payload.form_data).toEqual({ viz_type: 'sunburst_v2' });
     expect(payload.result_format).toBe(format);
-    postFormSpy.mockRestore();
+    postBlobSpy.mockRestore();
   },
 );

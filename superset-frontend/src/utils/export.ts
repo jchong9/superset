@@ -21,6 +21,18 @@ import { logging } from '@apache-superset/core/utils';
 import rison from 'rison';
 import { parse as parseContentDisposition } from 'content-disposition';
 
+/** API values controlling how applied-filter metadata is returned (e.g., in comments or as a separate file). */
+export enum ExportFilterMetadataMode {
+  None = 'none',
+  Inline = 'inline',
+  Separate = 'separate',
+}
+
+export interface ExportFilterValue {
+  label: string;
+  value: string;
+}
+
 // Maximum blob size for in-memory downloads (100MB)
 const MAX_BLOB_SIZE = 100 * 1024 * 1024;
 

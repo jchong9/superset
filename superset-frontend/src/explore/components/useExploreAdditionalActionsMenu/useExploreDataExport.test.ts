@@ -20,6 +20,7 @@
 import { act, renderHook } from '@testing-library/react';
 import * as exploreUtils from 'src/explore/exploreUtils';
 import { useExploreDataExport } from './useExploreDataExport';
+import { ExportFilterMetadataMode } from 'src/utils/export';
 
 const mockAddDangerToast = jest.fn();
 const mockAddSuccessToast = jest.fn();
@@ -64,7 +65,7 @@ jest.mock('react-redux', () => ({
     callback({
       charts: {
         1: {
-          queriesResponse: [{ sql_rowcount: 10 }],
+          queriesResponse: [{ sql_rowcount: 10000 }],
         },
       },
       explore: {
@@ -132,7 +133,58 @@ test('exports pivoted CSV with post processed result type', async () => {
     ownState: defaultProps.ownState,
     resultType: 'post_processed',
     resultFormat: 'csv',
+    exportFiltersMode: ExportFilterMetadataMode.None,
   });
+});
+
+test('exports CSV with the inline filter metadata placeholder', async () => {
+  const { result } = renderHook(() => useExploreDataExport(defaultProps));
+
+  await act(async () => {
+    await result.current.exportCSV(ExportFilterMetadataMode.Inline);
+  });
+
+  expect(mockExportChart).toHaveBeenCalledWith(
+    expect.objectContaining({
+      resultFormat: 'csv',
+      exportFiltersMode: ExportFilterMetadataMode.Inline,
+    }),
+  );
+});
+
+test('exports pivoted CSV with separate filter metadata', async () => {
+  const { result } = renderHook(() => useExploreDataExport(defaultProps));
+
+  await act(async () => {
+    await result.current.exportCSVPivoted(ExportFilterMetadataMode.Separate);
+  });
+
+  expect(mockExportChart).toHaveBeenCalledWith(
+    expect.objectContaining({
+      resultType: 'post_processed',
+      resultFormat: 'csv',
+      exportFiltersMode: ExportFilterMetadataMode.Separate,
+      exportFilterValues: [],
+    }),
+  );
+});
+
+test('separate CSV exports bypass streaming and return filter metadata in the ZIP', async () => {
+  const { result } = renderHook(() => useExploreDataExport(defaultProps));
+
+  await act(async () => {
+    await result.current.exportCSV(ExportFilterMetadataMode.Separate);
+  });
+
+  expect(mockExportChart).toHaveBeenCalledWith(
+    expect.objectContaining({
+      resultFormat: 'csv',
+      exportFiltersMode: ExportFilterMetadataMode.Separate,
+      exportFilterValues: [],
+      onStartStreamingExport: null,
+    }),
+  );
+  expect(mockStartExport).not.toHaveBeenCalled();
 });
 
 test('exports JSON with results result type', async () => {
