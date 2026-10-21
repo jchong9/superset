@@ -76,6 +76,7 @@ import ViewQueryModal from '../controls/ViewQueryModal';
 import EmbedCodeContent from '../EmbedCodeContent';
 import { useDashboardsMenuItems } from './DashboardsSubMenu';
 import { useExploreDataExport } from './useExploreDataExport';
+import { ExportFilterMetadataMode } from 'src/utils/export';
 
 export const SEARCH_THRESHOLD = 10;
 
@@ -156,6 +157,27 @@ const MENU_KEYS = {
 };
 
 const VIZ_TYPES_PIVOTABLE = [VizType.PivotTable];
+
+const exportFiltersMenuItems = (
+  exportType: string,
+  onExport: (mode: ExportFilterMetadataMode) => void,
+) => [
+  {
+    key: `${exportType}-none`,
+    label: t('Without filter metadata'),
+    onClick: () => onExport(ExportFilterMetadataMode.None),
+  },
+  {
+    key: `${exportType}-inline`,
+    label: t('Include filters in metadata comments'),
+    onClick: () => onExport(ExportFilterMetadataMode.Inline),
+  },
+  {
+    key: `${exportType}-separate`,
+    label: t('Include filters as a separate file'),
+    onClick: () => onExport(ExportFilterMetadataMode.Separate),
+  },
+];
 
 // Data and PDF exports, dropped from the menu of image-only charts (see isImageOnlyExportViz).
 const DATA_AND_PDF_EXPORT_KEYS: string[] = [
@@ -762,6 +784,7 @@ export const useExploreAdditionalActionsMenu = (
           label: dataExportLabel(t('Export to original .CSV')),
           icon: <Icons.FileOutlined />,
           disabled: !canDownloadCSV,
+          children: exportFiltersMenuItems('explore-original', exportCSV),
           onClick: () => {
             exportCSV();
             setIsDropdownVisible(false);
@@ -778,6 +801,7 @@ export const useExploreAdditionalActionsMenu = (
           label: dataExportLabel(t('Export to pivoted .CSV')),
           icon: <Icons.FileOutlined />,
           disabled: !canDownloadCSV,
+          children: exportFiltersMenuItems('explore-pivoted', exportCSVPivoted),
           onClick: () => {
             exportCSVPivoted();
             setIsDropdownVisible(false);
@@ -817,6 +841,7 @@ export const useExploreAdditionalActionsMenu = (
         label: dataExportLabel(t('Export to .CSV')),
         icon: <Icons.FileOutlined />,
         disabled: !canDownloadCSV,
+        children: exportFiltersMenuItems('explore', exportCSV),
         onClick: () => {
           exportCSV();
           setIsDropdownVisible(false);
@@ -907,6 +932,26 @@ export const useExploreAdditionalActionsMenu = (
         label: dataExportLabel(t('Export to .CSV')),
         icon: <Icons.FileOutlined />,
         disabled: !canDownloadCSV,
+        children: exportFiltersMenuItems(
+          'explore-current-view',
+          async mode => {
+            if (
+              mode === ExportFilterMetadataMode.None &&
+              !latestQueryFormData?.server_pagination &&
+              ownState?.clientView &&
+              ownState.clientView.columns?.length
+            ) {
+              const { rows = [], columns = [] } = ownState.clientView;
+              downloadClientCSV(
+                rows,
+                columns,
+                slice?.slice_name || 'current_view',
+              );
+            } else {
+              await exportCSV(mode);
+            }
+          },
+        ),
         onClick: async () => {
           // Use 'results' to export the *current view* (as opposed to 'full').
           // Pass ownState so client/UI state (e.g., filters) can be respected when supported.

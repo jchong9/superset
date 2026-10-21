@@ -19,6 +19,7 @@
 import { JsonObject, LatestQueryFormData, QueryData } from '@superset-ui/core';
 import { GenericDataType } from '@apache-superset/core/common';
 import type { ChartStatus, Datasource } from 'src/explore/types';
+import type { ExportFilterMetadataMode } from 'src/utils/export';
 
 export enum ResultTypes {
   Results = 'results',
@@ -66,7 +67,7 @@ export interface SamplesPaneProps {
 }
 
 export interface DrillControlsProps {
-  onDownloadCSV?: () => void;
+  onDownloadCSV?: (mode: ExportFilterMetadataMode) => void;
   onDownloadXLSX?: () => void;
   onReload?: () => void;
 }

@@ -60,6 +60,7 @@ import TableControls from './DrillDetailTableControls';
 import { getDrillPayload } from './utils';
 import { ResultsPage } from './types';
 import { datasetLabelLower } from 'src/features/semanticLayers/label';
+import { ExportFilterMetadataMode } from 'src/utils/export';
 
 const DEFAULT_PAGE_SIZE = 50;
 
@@ -230,7 +231,7 @@ export default function DrillDetailPane({
   }, []);
 
   const handleDownload = useCallback(
-    (exportType: 'csv' | 'xlsx') => {
+    (exportType: 'csv' | 'xlsx', exportFiltersMode?: ExportFilterMetadataMode) => {
       const drillPayload = getDrillPayload(formData, filters);
       if (!drillPayload) {
         addDangerToast(t('Unable to generate download payload'));
@@ -259,6 +260,13 @@ export default function DrillDetailPane({
       if (dashboardId) {
         payload.form_data = { viz_type: formData.viz_type, dashboardId };
       }
+      if (
+        exportFiltersMode &&
+        exportFiltersMode !== ExportFilterMetadataMode.None
+      ) {
+        // TOOO: add filters payload to the chart-data endpoint
+        payload.export_filters_mode = exportFiltersMode;
+      }
       SupersetClient.postForm('/api/v1/chart/data', {
         form_data: safeStringify(payload),
       }).catch(error => {
@@ -279,7 +287,8 @@ export default function DrillDetailPane({
   );
 
   const handleDownloadCSV = useCallback(
-    () => handleDownload('csv'),
+    (exportFiltersMode: ExportFilterMetadataMode) =>
+      handleDownload('csv', exportFiltersMode),
     [handleDownload],
   );
 
