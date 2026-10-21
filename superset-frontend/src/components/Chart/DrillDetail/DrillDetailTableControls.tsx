@@ -30,6 +30,7 @@ import { Icons } from '@superset-ui/core/components/Icons';
 import { Tooltip } from '@superset-ui/core/components';
 import { CopyToClipboardButton } from 'src/explore/components/DataTableControl';
 import { TabularDataRow } from 'src/utils/common';
+import type { ExportFilterMetadataMode } from 'src/utils/export';
 import { usePermissions } from 'src/hooks/usePermissions';
 import DownloadDropdown from './DownloadDropdown';
 
@@ -40,7 +41,7 @@ export type TableControlsProps = {
   loading: boolean;
   onReload: () => void;
   canDownload: boolean;
-  onDownloadCSV: () => void;
+  onDownloadCSV: (mode: ExportFilterMetadataMode) => void;
   onDownloadXLSX: () => void;
   data?: TabularDataRow[];
   columnNames?: string[];

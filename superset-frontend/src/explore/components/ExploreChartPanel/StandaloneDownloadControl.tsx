@@ -18,6 +18,7 @@
  */
 
 import { useMemo } from 'react';
+import { useSelector } from 'react-redux';
 import { JsonObject, LatestQueryFormData } from '@superset-ui/core';
 import { Button, Dropdown } from '@superset-ui/core/components';
 import { Icons } from '@superset-ui/core/components/Icons';
@@ -25,7 +26,22 @@ import { t } from '@apache-superset/core/translation';
 import { css, useTheme } from '@apache-superset/core/theme';
 import { StreamingExportModal } from 'src/components/StreamingExportModal';
 import { Slice } from 'src/types/Chart';
+import type { RootState } from 'src/views/store';
 import { useExploreDataExport } from '../useExploreAdditionalActionsMenu/useExploreDataExport';
+import { ExportFilterMetadataMode } from 'src/utils/export';
+
+const getFilterMetadataLabel = (mode: ExportFilterMetadataMode): string => {
+  switch (mode) {
+    case ExportFilterMetadataMode.None:
+      return t('Without filter metadata');
+    case ExportFilterMetadataMode.Inline:
+      return t('Include filters in metadata comments');
+    case ExportFilterMetadataMode.Separate:
+      return t('Include filters as a separate file');
+    default:
+      return mode;
+  }
+};
 
 interface StandaloneDownloadControlProps {
   latestQueryFormData: LatestQueryFormData;
@@ -41,6 +57,7 @@ const StandaloneDownloadControl = ({
   ownState,
 }: StandaloneDownloadControlProps) => {
   const theme = useTheme();
+  const locale = useSelector((state: RootState) => state.common?.locale);
 
   const { exportCSV, exportJson, exportExcel, streamingExportState } =
     useExploreDataExport({
@@ -55,7 +72,11 @@ const StandaloneDownloadControl = ({
       {
         key: 'export_csv',
         label: t('Export to .CSV'),
-        onClick: exportCSV,
+        children: Object.values(ExportFilterMetadataMode).map(mode => ({
+          key: `csv-${mode}`,
+          label: getFilterMetadataLabel(mode),
+          onClick: () => exportCSV(mode),
+        })),
       },
       {
         key: 'export_json',
@@ -68,7 +89,7 @@ const StandaloneDownloadControl = ({
         onClick: exportExcel,
       },
     ],
-    [exportCSV, exportExcel, exportJson],
+    [exportCSV, exportExcel, exportJson, locale],
   );
 
   return (

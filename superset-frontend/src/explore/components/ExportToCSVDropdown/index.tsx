@@ -19,9 +19,8 @@
 import { ReactChild, useCallback, Key } from 'react';
 
 import { t } from '@apache-superset/core/translation';
-import { styled } from '@apache-superset/core/theme';
-import { Icons } from '@superset-ui/core/components/Icons';
 import { Dropdown } from '@superset-ui/core/components';
+import { ExportFilterMetadataMode } from 'src/utils/export';
 
 enum MenuKeys {
   ExportOriginal = 'export_original',
@@ -29,21 +28,31 @@ enum MenuKeys {
 }
 
 interface ExportToCSVButtonProps {
-  exportCSVOriginal: () => void;
-  exportCSVPivoted: () => void;
+  exportCSVOriginal: (mode: ExportFilterMetadataMode) => void;
+  exportCSVPivoted: (mode: ExportFilterMetadataMode) => void;
   children: ReactChild;
 }
 
-const MenuItemContent = styled.div`
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-
-  span[role='img'] {
-    font-size: ${({ theme }) => theme.fontSizeLG}px;
-    margin-left: ${({ theme }) => theme.sizeUnit * 4}px;
-  }
-`;
+const metadataItems = (
+  exportType: string,
+  onExport: (mode: ExportFilterMetadataMode) => void,
+) => [
+  {
+    key: `${exportType}-none`,
+    label: t('Without filter metadata'),
+    onClick: () => onExport(ExportFilterMetadataMode.None),
+  },
+  {
+    key: `${exportType}-inline`,
+    label: t('Include filters in metadata comments'),
+    onClick: () => onExport(ExportFilterMetadataMode.Inline),
+  },
+  {
+    key: `${exportType}-separate`,
+    label: t('Include filters as a separate file'),
+    onClick: () => onExport(ExportFilterMetadataMode.Separate),
+  },
+];
 
 export const ExportToCSVDropdown = ({
   exportCSVOriginal,
@@ -54,10 +63,10 @@ export const ExportToCSVDropdown = ({
     ({ key }: { key: Key }) => {
       switch (key) {
         case MenuKeys.ExportOriginal:
-          exportCSVOriginal();
+          exportCSVOriginal(ExportFilterMetadataMode.None);
           break;
         case MenuKeys.ExportPivoted:
-          exportCSVPivoted();
+          exportCSVPivoted(ExportFilterMetadataMode.None);
           break;
         default:
           break;
@@ -75,21 +84,13 @@ export const ExportToCSVDropdown = ({
         items: [
           {
             key: MenuKeys.ExportOriginal,
-            label: (
-              <MenuItemContent>
-                {t('Original')}
-                <Icons.DownloadOutlined />
-              </MenuItemContent>
-            ),
+            label: t('Original'),
+            children: metadataItems('original', exportCSVOriginal),
           },
           {
             key: MenuKeys.ExportPivoted,
-            label: (
-              <MenuItemContent>
-                {t('Pivoted')}
-                <Icons.DownloadOutlined />
-              </MenuItemContent>
-            ),
+            label: t('Pivoted'),
+            children: metadataItems('pivoted', exportCSVPivoted),
           },
         ],
       }}

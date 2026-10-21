@@ -58,6 +58,7 @@ import { exportChart } from 'src/explore/exploreUtils';
 import { isEmbedded } from 'src/dashboard/util/isEmbedded';
 import { useAsyncModeOverride } from 'src/utils/asyncMode';
 import { Dataset, DrillByType } from '../types';
+import { ExportFilterMetadataMode } from 'src/utils/export';
 import DrillByChart from './DrillByChart';
 import { ContextMenuItem } from '../ChartContextMenu/ChartContextMenu';
 import { useContextMenu } from '../ChartContextMenu/useContextMenu';
@@ -375,12 +376,16 @@ export default function DrillByModal({
   ]);
 
   const handleDownload = useCallback(
-    (exportType: 'csv' | 'xlsx') => {
+    (
+      exportType: 'csv' | 'xlsx',
+      exportFiltersMode: ExportFilterMetadataMode = ExportFilterMetadataMode.None,
+    ) => {
       Promise.resolve(
         exportChart({
           formData: drilledFormData,
           resultFormat: exportType,
           resultType: 'full',
+          exportFiltersMode,
         }),
       ).catch(error => {
         addDangerToast(
@@ -392,7 +397,8 @@ export default function DrillByModal({
   );
 
   const handleDownloadCSV = useCallback(
-    () => handleDownload('csv'),
+    (exportFiltersMode: ExportFilterMetadataMode) =>
+      handleDownload('csv', exportFiltersMode),
     [handleDownload],
   );
 

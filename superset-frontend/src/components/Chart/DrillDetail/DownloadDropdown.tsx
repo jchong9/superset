@@ -21,9 +21,10 @@ import { t } from '@apache-superset/core/translation';
 import { css, useTheme } from '@apache-superset/core/theme';
 import { Dropdown, Tooltip } from '@superset-ui/core/components';
 import { Icons } from '@superset-ui/core/components/Icons';
+import { ExportFilterMetadataMode } from 'src/utils/export';
 
 interface DownloadDropdownProps {
-  onDownloadCSV: () => void;
+  onDownloadCSV: (mode: ExportFilterMetadataMode) => void;
   onDownloadXLSX: () => void;
 }
 
@@ -38,7 +39,7 @@ const DownloadDropdown = ({
       menu={{
         onClick: ({ key }) => {
           if (key === 'csv') {
-            onDownloadCSV();
+            onDownloadCSV(ExportFilterMetadataMode.None);
           } else if (key === 'xlsx') {
             onDownloadXLSX();
           }
@@ -48,6 +49,23 @@ const DownloadDropdown = ({
             key: 'csv',
             label: t('Export to CSV'),
             icon: <Icons.FileOutlined />,
+            children: [
+              {
+                key: 'csv-none',
+                label: t('Without filter metadata'),
+                onClick: () => onDownloadCSV(ExportFilterMetadataMode.None),
+              },
+              {
+                key: 'csv-inline',
+                label: t('Include filters in metadata comments'),
+                onClick: () => onDownloadCSV(ExportFilterMetadataMode.Inline),
+              },
+              {
+                key: 'csv-separate',
+                label: t('Include filters as a separate file'),
+                onClick: () => onDownloadCSV(ExportFilterMetadataMode.Separate),
+              },
+            ],
           },
           {
             key: 'xlsx',
