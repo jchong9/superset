@@ -28,6 +28,7 @@ import mockState from 'spec/fixtures/mockState';
 import { cachedSupersetGet } from 'src/utils/cachedSupersetGet';
 import downloadAsImage from 'src/utils/downloadAsImage';
 import downloadAsPdf from 'src/utils/downloadAsPdf';
+import { ExportFilterMetadataMode } from 'src/utils/export';
 import SliceHeaderControls, { SliceHeaderControlsProps } from '.';
 import { chart } from 'src/components/Chart/chartReducer';
 
@@ -318,6 +319,22 @@ test('Should "export to CSV"', async () => {
   await userEvent.click(await screen.findByText('Export to .CSV'));
   expect(props.exportCSV).toHaveBeenCalledTimes(1);
   expect(props.exportCSV).toHaveBeenCalledWith(371);
+});
+
+test('Should export CSV with filter metadata mode', async () => {
+  const props = createProps();
+  renderWrapper(props);
+  await openMenu();
+  await userEvent.hover(screen.getByText('Download'));
+  await userEvent.hover(screen.getByText('Export to .CSV'));
+  await userEvent.click(
+    await screen.findByText('Include filters in metadata comments'),
+  );
+
+  expect(props.exportCSV).toHaveBeenCalledWith(
+    371,
+    ExportFilterMetadataMode.Inline,
+  );
 });
 
 test('Should "export to Excel"', async () => {

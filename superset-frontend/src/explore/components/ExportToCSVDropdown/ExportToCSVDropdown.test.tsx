@@ -18,6 +18,7 @@
  */
 import { render, screen, userEvent } from 'spec/helpers/testing-library';
 import { ExportToCSVDropdown } from './index';
+import { ExportFilterMetadataMode } from 'src/utils/export';
 
 const exportCSVOriginal = jest.fn();
 const exportCSVPivoted = jest.fn();
@@ -50,6 +51,28 @@ test('Call export csv original on click', async () => {
   await userEvent.click(screen.getByText('Original'));
 
   expect(exportCSVOriginal).toHaveBeenCalled();
+});
+
+test('Passes inline and separate metadata modes to the export callback', async () => {
+  setup();
+
+  await userEvent.click(screen.getByText('.CSV'));
+  await userEvent.click(screen.getByText('Original'));
+  await userEvent.click(
+    await screen.findByText('Include filters in metadata comments'),
+  );
+  expect(exportCSVOriginal).toHaveBeenCalledWith(
+    ExportFilterMetadataMode.Inline,
+  );
+
+  await userEvent.click(screen.getByText('.CSV'));
+  await userEvent.click(screen.getByText('Original'));
+  await userEvent.click(
+    await screen.findByText('Include filters as a separate file'),
+  );
+  expect(exportCSVOriginal).toHaveBeenCalledWith(
+    ExportFilterMetadataMode.Separate,
+  );
 });
 
 test('Call export csv pivoted on click', async () => {
