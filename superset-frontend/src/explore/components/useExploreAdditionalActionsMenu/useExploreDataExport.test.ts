@@ -152,6 +152,22 @@ test('exports CSV with the inline filter metadata placeholder', async () => {
   );
 });
 
+test('exports pivoted CSV with separate filter metadata', async () => {
+  const { result } = renderHook(() => useExploreDataExport(defaultProps));
+
+  await act(async () => {
+    await result.current.exportCSVPivoted(ExportFilterMetadataMode.Separate);
+  });
+
+  expect(mockExportChart).toHaveBeenCalledWith(
+    expect.objectContaining({
+      resultType: 'post_processed',
+      resultFormat: 'csv',
+      exportFiltersMode: ExportFilterMetadataMode.Separate,
+    }),
+  );
+});
+
 test('exports JSON with results result type', async () => {
   const { result } = renderHook(() => useExploreDataExport(defaultProps));
 

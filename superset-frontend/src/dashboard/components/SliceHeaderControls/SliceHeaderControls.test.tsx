@@ -63,6 +63,7 @@ const createProps = (viz_type = VizType.Sunburst) =>
     addWarningToast: jest.fn(),
     exploreChart: jest.fn(),
     exportCSV: jest.fn(),
+    exportPivotCSV: jest.fn(),
     exportFullCSV: jest.fn(),
     exportXLSX: jest.fn(),
     exportFullXLSX: jest.fn(),
@@ -316,9 +317,13 @@ test('Should "export to CSV"', async () => {
   await openMenu();
   expect(props.exportCSV).toHaveBeenCalledTimes(0);
   await userEvent.hover(screen.getByText('Download'));
-  await userEvent.click(await screen.findByText('Export to .CSV'));
+  await userEvent.hover(await screen.findByText('Export to .CSV'));
+  await userEvent.click(await screen.findByText('Without filter metadata'));
   expect(props.exportCSV).toHaveBeenCalledTimes(1);
-  expect(props.exportCSV).toHaveBeenCalledWith(371);
+  expect(props.exportCSV).toHaveBeenCalledWith(
+    371,
+    ExportFilterMetadataMode.None,
+  );
 });
 
 test('Should export CSV with filter metadata mode', async () => {
@@ -326,7 +331,7 @@ test('Should export CSV with filter metadata mode', async () => {
   renderWrapper(props);
   await openMenu();
   await userEvent.hover(screen.getByText('Download'));
-  await userEvent.hover(screen.getByText('Export to .CSV'));
+  await userEvent.hover(await screen.findByText('Export to .CSV'));
   await userEvent.click(
     await screen.findByText('Include filters in metadata comments'),
   );
@@ -334,6 +339,22 @@ test('Should export CSV with filter metadata mode', async () => {
   expect(props.exportCSV).toHaveBeenCalledWith(
     371,
     ExportFilterMetadataMode.Inline,
+  );
+});
+
+test('Should export pivoted CSV with separate filter metadata', async () => {
+  const props = createProps(VizType.PivotTable);
+  renderWrapper(props);
+  await openMenu();
+  await userEvent.hover(screen.getByText('Download'));
+  await userEvent.hover(await screen.findByText('Export to Pivoted .CSV'));
+  await userEvent.click(
+    await screen.findByText('Include filters as a separate file'),
+  );
+
+  expect(props.exportPivotCSV).toHaveBeenCalledWith(
+    371,
+    ExportFilterMetadataMode.Separate,
   );
 });
 
@@ -369,9 +390,32 @@ test('Should "export full CSV"', async () => {
   await openMenu();
   expect(props.exportFullCSV).toHaveBeenCalledTimes(0);
   await userEvent.hover(screen.getByText('Download'));
-  await userEvent.click(await screen.findByText('Export to full .CSV'));
+  await userEvent.hover(await screen.findByText('Export to full .CSV'));
+  await userEvent.click(await screen.findByText('Without filter metadata'));
   expect(props.exportFullCSV).toHaveBeenCalledTimes(1);
-  expect(props.exportFullCSV).toHaveBeenCalledWith(371);
+  expect(props.exportFullCSV).toHaveBeenCalledWith(
+    371,
+    ExportFilterMetadataMode.None,
+  );
+});
+
+test('Should export full CSV with filter metadata mode', async () => {
+  (global as any).featureFlags = {
+    [FeatureFlag.AllowFullCsvExport]: true,
+  };
+  const props = createProps(VizType.Table);
+  renderWrapper(props);
+  await openMenu();
+  await userEvent.hover(screen.getByText('Download'));
+  await userEvent.hover(await screen.findByText('Export to full .CSV'));
+  await userEvent.click(
+    await screen.findByText('Include filters as a separate file'),
+  );
+
+  expect(props.exportFullCSV).toHaveBeenCalledWith(
+    371,
+    ExportFilterMetadataMode.Separate,
+  );
 });
 
 test('Should "export full CSV" for ag-grid table', async () => {
@@ -383,9 +427,13 @@ test('Should "export full CSV" for ag-grid table', async () => {
   await openMenu();
   expect(props.exportFullCSV).toHaveBeenCalledTimes(0);
   await userEvent.hover(screen.getByText('Download'));
-  await userEvent.click(await screen.findByText('Export to full .CSV'));
+  await userEvent.hover(await screen.findByText('Export to full .CSV'));
+  await userEvent.click(await screen.findByText('Without filter metadata'));
   expect(props.exportFullCSV).toHaveBeenCalledTimes(1);
-  expect(props.exportFullCSV).toHaveBeenCalledWith(371);
+  expect(props.exportFullCSV).toHaveBeenCalledWith(
+    371,
+    ExportFilterMetadataMode.None,
+  );
 });
 
 test('Should not show export full CSV if report is not table', async () => {

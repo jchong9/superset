@@ -33,6 +33,7 @@ import {
 import { getMockStoreWithNativeFilters } from 'spec/fixtures/mockStore';
 import chartQueries, { sliceId } from 'spec/fixtures/mockChartQueries';
 import { supersetGetCache } from 'src/utils/cachedSupersetGet';
+import { ExportFilterMetadataMode } from 'src/utils/export';
 import DrillDetailPane from './DrillDetailPane';
 
 const chart = chartQueries[sliceId];
@@ -308,7 +309,13 @@ describe('download actions', () => {
     await userEvent.click(
       await screen.findByRole('button', { name: 'Download' }),
     );
-    await userEvent.click(await screen.findByText(label));
+    const item = await screen.findByText(label);
+    if (label === 'Export to CSV') {
+      await userEvent.hover(item);
+      await userEvent.click(await screen.findByText('Without filter metadata'));
+    } else {
+      await userEvent.click(item);
+    }
   };
 
   test('CSV export posts drill_detail payload with ROW_LIMIT', async () => {
@@ -330,6 +337,29 @@ describe('download actions', () => {
       dashboardId: 123,
       viz_type: chart.form_data.viz_type,
     });
+    postFormSpy.mockRestore();
+  });
+
+  test('CSV export includes the selected filter metadata mode', async () => {
+    fetchWithData();
+    const postFormSpy = jest
+      .spyOn(SupersetClient, 'postForm')
+      .mockImplementation(() => Promise.resolve());
+    renderWithDownloadPermission();
+
+    await userEvent.click(
+      await screen.findByRole('button', { name: 'Download' }),
+    );
+    await userEvent.hover(await screen.findByText('Export to CSV'));
+    await userEvent.click(
+      await screen.findByText('Include filters as a separate file'),
+    );
+
+    const body = postFormSpy.mock.calls[0][1] as { form_data: string };
+    const payload = JSON.parse(body.form_data);
+    expect(payload.export_filters_mode).toBe(
+      ExportFilterMetadataMode.Separate,
+    );
     postFormSpy.mockRestore();
   });
 
@@ -573,7 +603,12 @@ test.each([
     await userEvent.click(
       await screen.findByRole('button', { name: 'Download' }),
     );
-    await userEvent.click(await screen.findByText(label));
+    if (label === 'Export to CSV') {
+      await userEvent.hover(await screen.findByText(label));
+      await userEvent.click(await screen.findByText('Without filter metadata'));
+    } else {
+      await userEvent.click(await screen.findByText(label));
+    }
     expect(postFormSpy).toHaveBeenCalledTimes(1);
     const body = postFormSpy.mock.calls[0][1] as { form_data: string };
     const payload = JSON.parse(body.form_data);

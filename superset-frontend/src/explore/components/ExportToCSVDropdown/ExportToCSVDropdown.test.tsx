@@ -48,25 +48,30 @@ test('Call export csv original on click', async () => {
   setup();
 
   await userEvent.click(screen.getByText('.CSV'));
-  await userEvent.click(screen.getByText('Original'));
+  await userEvent.hover(screen.getByText('Original'));
+  await userEvent.click(await screen.findByText('Without filter metadata'));
 
-  expect(exportCSVOriginal).toHaveBeenCalled();
+  expect(exportCSVOriginal).toHaveBeenCalledWith(ExportFilterMetadataMode.None);
 });
 
-test('Passes inline and separate metadata modes to the export callback', async () => {
+test('Passes inline metadata mode to original CSV export', async () => {
   setup();
 
   await userEvent.click(screen.getByText('.CSV'));
-  await userEvent.click(screen.getByText('Original'));
+  await userEvent.hover(screen.getByText('Original'));
   await userEvent.click(
     await screen.findByText('Include filters in metadata comments'),
   );
   expect(exportCSVOriginal).toHaveBeenCalledWith(
     ExportFilterMetadataMode.Inline,
   );
+});
+
+test('Passes separate metadata mode to original CSV export', async () => {
+  setup();
 
   await userEvent.click(screen.getByText('.CSV'));
-  await userEvent.click(screen.getByText('Original'));
+  await userEvent.hover(screen.getByText('Original'));
   await userEvent.click(
     await screen.findByText('Include filters as a separate file'),
   );
@@ -79,7 +84,24 @@ test('Call export csv pivoted on click', async () => {
   setup();
 
   await userEvent.click(screen.getByText('.CSV'));
-  await userEvent.click(screen.getByText('Pivoted'));
+  await userEvent.hover(screen.getByText('Pivoted'));
+  await userEvent.click(await screen.findByText('Without filter metadata'));
 
-  expect(exportCSVPivoted).toHaveBeenCalled();
+  expect(exportCSVPivoted).toHaveBeenCalledWith(
+    ExportFilterMetadataMode.None,
+  );
+});
+
+test('Passes filter metadata mode to pivoted CSV export', async () => {
+  setup();
+
+  await userEvent.click(screen.getByText('.CSV'));
+  await userEvent.hover(screen.getByText('Pivoted'));
+  await userEvent.click(
+    await screen.findByText('Include filters as a separate file'),
+  );
+
+  expect(exportCSVPivoted).toHaveBeenCalledWith(
+    ExportFilterMetadataMode.Separate,
+  );
 });

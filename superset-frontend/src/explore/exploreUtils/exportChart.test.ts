@@ -17,6 +17,7 @@
  * under the License.
  */
 import { exportChart } from '.';
+import { ExportFilterMetadataMode } from 'src/utils/export';
 
 jest.mock('src/utils/export', () => ({
   ...jest.requireActual('src/utils/export'),
@@ -194,6 +195,29 @@ test('exportChart successfully exports chart as CSV', async () => {
   expect(downloadBlob).toHaveBeenCalledWith(
     mockBlob,
     expect.stringContaining('.csv'),
+  );
+});
+
+test('exportChart includes filter metadata mode in the chart-data payload', async () => {
+  const onStartStreamingExport = jest.fn();
+  const { getChartBuildQueryRegistry } = jest.requireMock('@superset-ui/core');
+  getChartBuildQueryRegistry.mockImplementationOnce(() => ({
+    get: jest.fn().mockReturnValue(() => ({ queries: [] })),
+  }));
+
+  await exportChart({
+    formData: baseFormData,
+    resultFormat: 'csv',
+    exportFiltersMode: ExportFilterMetadataMode.Separate,
+    onStartStreamingExport: onStartStreamingExport as unknown as null,
+  });
+
+  expect(onStartStreamingExport).toHaveBeenCalledWith(
+    expect.objectContaining({
+      payload: expect.objectContaining({
+        export_filters_mode: ExportFilterMetadataMode.Separate,
+      }),
+    }),
   );
 });
 
