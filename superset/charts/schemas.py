@@ -35,7 +35,11 @@ from marshmallow import (
 from marshmallow.validate import Length, NoneOf, Range
 from marshmallow_union import Union
 
-from superset.common.chart_data import ChartDataResultFormat, ChartDataResultType
+from superset.common.chart_data import (
+    ChartDataExportFiltersMode,
+    ChartDataResultFormat,
+    ChartDataResultType,
+)
 from superset.common.chart_data_timing import CHART_DATA_TIMING_VERSION
 from superset.constants import SemanticCacheStatus
 from superset.db_engine_specs.base import builtin_time_grains
@@ -1674,6 +1678,11 @@ class ChartDataQueryObjectSchema(Schema):
     )
 
 
+class ChartDataExportFilterValueSchema(Schema):
+    label = fields.String(required=True)
+    value = fields.String(required=True)
+
+
 class ChartDataQueryContextSchema(Schema):
     query_context_factory: QueryContextFactory | None = None
     datasource = fields.Nested(ChartDataDatasourceSchema)
@@ -1749,14 +1758,36 @@ class ChartDataQueryContextSchema(Schema):
         allow_none=True,
     )
 
+    export_filters_mode = fields.Enum(
+        ChartDataExportFiltersMode,
+        by_value=True,
+        metadata={
+            "description": "Optional export metadata mode. CSV exports with "
+            "'separate' include a filters.csv file in the ZIP "
+            "archive; 'none' and 'inline' do not add filter metadata."
+        },
+        required=False,
+        allow_none=True,
+    )
+
+    export_filter_values = fields.List(
+        fields.Nested(ChartDataExportFilterValueSchema),
+        metadata={
+            "description": "Optional frontend-formatted filter pill labels and values "
+            "included in separate CSV export metadata."
+        },
+        required=False,
+        allow_none=True,
+    )
+
     # pylint: disable=unused-argument
     @post_load
     def make_query_context(self, data: dict[str, Any], **kwargs: Any) -> QueryContext:
-        # ``async_mode`` and ``tab_id`` are request-level hints (read by the API to
-        # decide sync vs async and to route the per-tab subscription), not part of
-        # the QueryContext, so drop them before building one.
+        # These are request-level hints, not part of the QueryContext.
         data.pop("async_mode", None)
         data.pop("tab_id", None)
+        data.pop("export_filters_mode", None)
+        data.pop("export_filter_values", None)
         query_context = self.get_query_context_factory().create(**data)
         return query_context
 

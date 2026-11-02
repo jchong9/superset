@@ -18,8 +18,10 @@ from __future__ import annotations
 
 import inspect
 from copy import deepcopy
+from io import BytesIO
 from typing import Any, TYPE_CHECKING
 from unittest.mock import MagicMock, patch
+from zipfile import ZipFile
 
 import pytest
 from flask import Flask, g, Response
@@ -28,13 +30,20 @@ from superset.charts.data.api import ChartDataRestApi
 from superset.charts.data.dashboard_filter_context import (
     apply_dashboard_filter_context,
 )
-from superset.charts.schemas import ChartDataTimingSchema
+from superset.charts.schemas import (
+    ChartDataQueryContextSchema,
+    ChartDataTimingSchema,
+)
 from superset.commands.chart.data.get_data_command import ChartDataCommand
 from superset.commands.chart.exceptions import (
     ChartDataCacheLoadError,
     ChartDataQueryFailedError,
 )
-from superset.common.chart_data import ChartDataResultFormat, ChartDataResultType
+from superset.common.chart_data import (
+    ChartDataExportFiltersMode,
+    ChartDataResultFormat,
+    ChartDataResultType,
+)
 from superset.common.chart_data_timing import (
     ChartDataExecutionResult,
     QueryDataResult,
@@ -1113,6 +1122,217 @@ def test_send_chart_response_uses_chart_name_for_csv_filename() -> None:
 
     content_disposition = response.headers["Content-Disposition"]
     assert "My_Chart" in content_disposition
+
+
+def test_send_chart_response_separate_csv_includes_filter_metadata(
+    app: SupersetApp,
+) -> None:
+    query_context = MagicMock()
+    query_context.result_type = ChartDataResultType.FULL
+    query_context.result_format = ChartDataResultFormat.CSV
+    query_context.queries = [
+        {
+            "filters": [
+                {
+                    "col": "country",
+                    "label": "Country",
+                    "op": "==",
+                    "val": "US",
+                },
+                {"col": "state", "op": "==", "val": "CA"},
+                {
+                    "col": "created_at",
+                    "label": "Created At",
+                    "op": "TEMPORAL_RANGE",
+                    "val": "1 : 24",
+                },
+                {"col": "revenue", "op": ">=", "val": 100},
+            ],
+            "time_range": "No filter",
+        }
+    ]
+    query_context.form_data = {
+        "adhoc_filters": [
+            {
+                "expressionType": "SQL",
+                "clause": "WHERE",
+                "sqlExpression": "revenue > 100",
+            }
+        ]
+    }
+    result = {
+        "query_context": query_context,
+        "queries": [
+            {
+                "data": "country,revenue\nUS,150\n",
+                "applied_filters": [
+                    {"column": "country"},
+                    {"column": "created_at"},
+                    {"column": "revenue"},
+                ],
+                "query": "SELECT * FROM data WHERE tenant_id = 1",
+            }
+        ],
+    }
+    api = ChartDataRestApi()
+
+    with (
+        app.test_request_context("/api/v1/chart/data"),
+        patch.dict(app.config, {"CSV_STREAMING_ROW_THRESHOLD": 1}),
+        patch("superset.charts.data.api.security_manager") as security_manager,
+        patch("superset.charts.data.api.is_feature_enabled", return_value=False),
+    ):
+        security_manager.can_access.return_value = True
+        response = api._send_chart_response(
+            result,
+            form_data={"slice_name": "My Chart", "row_limit": 1},
+            export_filters_mode=ChartDataExportFiltersMode.SEPARATE,
+        )
+
+    assert response.mimetype == "application/zip"
+    with ZipFile(BytesIO(response.get_data())) as archive:
+        assert len(archive.namelist()) == 2
+        assert archive.namelist()[-1] == "filters.csv"
+        assert any(name.endswith(".csv") for name in archive.namelist())
+        metadata = archive.read("filters.csv").decode("utf-8")
+
+    assert metadata == (
+        "Filter,Value\n"
+        "Country,US\n"
+        "Created At,1 : 24\n"
+        "revenue,100\n"
+        "Custom SQL filter (WHERE),revenue > 100\n"
+    )
+    assert "state" not in metadata
+    assert "tenant_id" not in metadata
+
+
+def test_send_chart_response_uses_frontend_filter_pill_values(
+    app: SupersetApp,
+) -> None:
+    query_context = MagicMock()
+    query_context.result_type = ChartDataResultType.FULL
+    query_context.result_format = ChartDataResultFormat.CSV
+    query_context.queries = []
+    result = {
+        "query_context": query_context,
+        "queries": [{"data": "value\n1\n"}],
+    }
+
+    with (
+        app.test_request_context("/api/v1/chart/data"),
+        patch("superset.charts.data.api.security_manager") as security_manager,
+        patch("superset.charts.data.api.is_feature_enabled", return_value=False),
+    ):
+        security_manager.can_access.return_value = True
+        response = ChartDataRestApi()._send_chart_response(
+            result,
+            export_filters_mode=ChartDataExportFiltersMode.SEPARATE,
+            export_filter_values=[
+                {"label": "Date", "value": "2026-01-01 <= dttm <= 2026-01-31"},
+                {"label": "Region", "value": "North, South"},
+            ],
+        )
+
+    with ZipFile(BytesIO(response.get_data())) as archive:
+        metadata = archive.read("filters.csv").decode("utf-8")
+
+    assert metadata == (
+        "Filter,Value\n"
+        "Date,2026-01-01 <= dttm <= 2026-01-31\n"
+        'Region,"North, South"\n'
+    )
+
+
+def test_separate_export_filter_metadata_is_two_column_csv() -> None:
+    query_context = MagicMock()
+    query_context.queries = [{"filters": [], "time_range": "No filter"}]
+    query_context.form_data = {}
+
+    metadata = ChartDataRestApi._get_export_filter_metadata(query_context, [])
+
+    assert metadata == "Filter,Value\n"
+
+
+def test_chart_data_schema_treats_export_filter_mode_as_request_hint() -> None:
+    factory = MagicMock()
+    query_context = MagicMock()
+    factory.create.return_value = query_context
+    schema = ChartDataQueryContextSchema()
+
+    with patch.object(schema, "get_query_context_factory", return_value=factory):
+        loaded = schema.load(
+            {
+                "datasource": {"id": 1, "type": "table"},
+                "queries": [],
+                "export_filters_mode": "separate",
+                "export_filter_values": [
+                    {"label": "Date", "value": "2026-01-01 <= dttm <= 2026-01-31"}
+                ],
+            }
+        )
+
+    assert loaded is query_context
+    factory.create.assert_called_once_with(
+        datasource={"id": 1, "type": "table"},
+        queries=[],
+    )
+
+
+def test_inline_csv_export_does_not_create_filter_archive(
+    app: SupersetApp,
+) -> None:
+    query_context = MagicMock()
+    query_context.result_type = ChartDataResultType.FULL
+    query_context.result_format = ChartDataResultFormat.CSV
+    query_context.queries = []
+    result = {
+        "query_context": query_context,
+        "queries": [{"data": "country\nUS\n"}],
+    }
+    api = ChartDataRestApi()
+
+    with (
+        app.test_request_context("/api/v1/chart/data"),
+        patch("superset.charts.data.api.security_manager") as security_manager,
+        patch("superset.charts.data.api.is_feature_enabled", return_value=False),
+    ):
+        security_manager.can_access.return_value = True
+        response = api._send_chart_response(
+            result, export_filters_mode=ChartDataExportFiltersMode.INLINE
+        )
+
+    assert response.mimetype == "text/csv"
+    assert response.get_data(as_text=True) == "country\nUS\n"
+
+
+def test_separate_filter_export_does_not_stream_before_query_execution() -> None:
+    query_context = MagicMock()
+    query_context.slice_ = None
+    query_context.queries = [{}]
+    query_context.result_format = ChartDataResultFormat.CSV
+    query_context.result_type = ChartDataResultType.FULL
+
+    assert not ChartDataRestApi._should_stream_before_execution(
+        query_context,
+        expected_rows=100_000,
+        export_filters_mode=ChartDataExportFiltersMode.SEPARATE,
+    )
+
+
+def test_parse_export_filters_mode_returns_typed_mode() -> None:
+    assert (
+        ChartDataRestApi._parse_export_filters_mode("separate")
+        is ChartDataExportFiltersMode.SEPARATE
+    )
+    assert ChartDataRestApi._parse_export_filters_mode(None) is None
+
+
+def test_parse_export_filters_mode_rejects_unknown_mode() -> None:
+    from marshmallow import ValidationError
+
+    with pytest.raises(ValidationError, match="export_filters_mode"):
+        ChartDataRestApi._parse_export_filters_mode("unknown")
 
 
 def test_send_chart_response_uses_chart_name_for_xlsx_filename() -> None:

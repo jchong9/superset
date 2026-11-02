@@ -17,6 +17,8 @@
 from __future__ import annotations
 
 import contextlib
+import csv
+import io
 import logging
 import re
 from datetime import datetime
@@ -48,7 +50,11 @@ from superset.commands.chart.exceptions import (
     ChartDataQueryFailedError,
 )
 from superset.commands.streaming_export.base import encode_csv_stream
-from superset.common.chart_data import ChartDataResultFormat, ChartDataResultType
+from superset.common.chart_data import (
+    ChartDataExportFiltersMode,
+    ChartDataResultFormat,
+    ChartDataResultType,
+)
 from superset.common.chart_data_timing import ChartDataExecutionResult
 from superset.common.query_context_factory import QueryContextFactory
 from superset.connectors.sqla.models import BaseDatasource
@@ -228,6 +234,9 @@ class ChartDataRestApi(ChartRestApi):
             query_context = self._create_query_context_from_form(json_body)
             command = ChartDataCommand(query_context)
             command.validate()
+            export_filters_mode = self._parse_export_filters_mode(
+                request.args.get("export_filters_mode")
+            )
         except SemanticLayersDisabledError as error:
             return self.response(404, message=str(error))
         except DatasourceNotFound:
@@ -266,6 +275,7 @@ class ChartDataRestApi(ChartRestApi):
             add_extra_log_payload=add_extra_log_payload,
             dashboard_filter_context=dashboard_filter_context,
             slice_=chart,
+            export_filters_mode=export_filters_mode,
         )
 
     @expose("/data", methods=("POST",))
@@ -333,6 +343,9 @@ class ChartDataRestApi(ChartRestApi):
             query_context = self._create_query_context_from_form(json_body)
             command = ChartDataCommand(query_context)
             command.validate()
+            export_filters_mode = self._parse_export_filters_mode(
+                json_body.get("export_filters_mode")
+            )
         except SemanticLayersDisabledError as error:
             return self.response(404, message=str(error))
         except DatasourceNotFound:
@@ -367,6 +380,8 @@ class ChartDataRestApi(ChartRestApi):
             add_extra_log_payload=add_extra_log_payload,
             filename=filename,
             expected_rows=expected_rows,
+            export_filters_mode=export_filters_mode,
+            export_filter_values=json_body.get("export_filter_values"),
         )
 
     @staticmethod
@@ -465,6 +480,8 @@ class ChartDataRestApi(ChartRestApi):
         expected_rows: int | None = None,
         dashboard_filter_context: DashboardFilterContext | None = None,
         slice_: Slice | None = None,
+        export_filters_mode: ChartDataExportFiltersMode | None = None,
+        export_filter_values: list[dict[str, str]] | None = None,
     ) -> Response:
         if isinstance(result, ChartDataExecutionResult):
             execution_result: ChartDataExecutionResult | None = result
@@ -506,7 +523,7 @@ class ChartDataRestApi(ChartRestApi):
             if is_csv_format and self._should_use_streaming(
                 materialized_result,
                 form_data,
-            ):
+            ) and export_filters_mode != ChartDataExportFiltersMode.SEPARATE:
                 return self._create_streaming_csv_response(
                     materialized_result,
                     form_data,
@@ -529,6 +546,26 @@ class ChartDataRestApi(ChartRestApi):
                 # return single query results
                 data = materialized_result["queries"][0]["data"]
                 if is_csv_format:
+                    if export_filters_mode == ChartDataExportFiltersMode.SEPARATE:
+                        encoding = app.config["CSV_EXPORT"].get("encoding", "utf-8")
+                        files = {
+                            f"{export_filename}.csv": (
+                                data.encode(encoding) if isinstance(data, str) else data
+                            ),
+                            "filters.csv": self._get_export_filter_metadata(
+                                materialized_result["query_context"],
+                                materialized_result["queries"],
+                                form_data,
+                                export_filter_values,
+                            ).encode("utf-8"),
+                        }
+                        return Response(
+                            create_zip(files),
+                            headers=generate_download_headers(
+                                "zip", export_filename
+                            ),
+                            mimetype="application/zip",
+                        )
                     return CsvResponse(
                         data, headers=generate_download_headers("csv", export_filename)
                     )
@@ -551,6 +588,16 @@ class ChartDataRestApi(ChartRestApi):
                 f"query_{idx + 1}.{result_format}": _process_data(query["data"])
                 for idx, query in enumerate(materialized_result["queries"])
             }
+            if (
+                is_csv_format
+                and export_filters_mode == ChartDataExportFiltersMode.SEPARATE
+            ):
+                files["filters.csv"] = self._get_export_filter_metadata(
+                    materialized_result["query_context"],
+                    materialized_result["queries"],
+                    form_data,
+                    export_filter_values,
+                ).encode("utf-8")
             return Response(
                 create_zip(files),
                 headers=generate_download_headers("zip", export_filename),
@@ -589,6 +636,101 @@ class ChartDataRestApi(ChartRestApi):
             return resp
 
         return self.response_400(message=f"Unsupported result_format: {result_format}")
+
+    @staticmethod
+    def _get_export_filter_metadata(
+        query_context: QueryContext,
+        query_results: list[dict[str, Any]],
+        form_data: dict[str, Any] | None = None,
+        export_filter_values: list[dict[str, str]] | None = None,
+    ) -> str:
+        """Create a two-column CSV of applied filter labels and values."""
+        filters: list[tuple[str, str]] = []
+        seen: set[tuple[str, str]] = set()
+
+        def add(label: str, value: str) -> None:
+            row = (label, value)
+            if row not in seen:
+                seen.add(row)
+                filters.append(row)
+
+        if export_filter_values is not None:
+            for filter_value in export_filter_values:
+                add(filter_value["label"], filter_value["value"])
+
+        for index, query_object in (
+            enumerate(query_context.queries)
+            if export_filter_values is None
+            else ()
+        ):
+            if isinstance(query_object, dict):
+                query_filters = query_object.get(
+                    "filters", query_object.get("filter", [])
+                )
+                time_range = query_object.get("time_range")
+            else:
+                query_filters = getattr(query_object, "filter", [])
+                time_range = getattr(query_object, "time_range", None)
+            if isinstance(query_filters, list):
+                query_result = (
+                    query_results[index] if index < len(query_results) else {}
+                )
+                applied_columns = {
+                    item.get("column")
+                    for item in query_result.get("applied_filters", [])
+                    if isinstance(item, dict) and item.get("column")
+                }
+                filter_status_available = "applied_filters" in query_result
+
+                for filter_ in query_filters:
+                    if not isinstance(filter_, dict):
+                        continue
+                    column = filter_.get("col")
+                    if (
+                        filter_status_available
+                        and column
+                        and column not in applied_columns
+                    ):
+                        continue
+                    label = filter_.get("label") or column or "Filter"
+                    add(str(label), str(filter_.get("val")))
+
+            if isinstance(time_range, str) and time_range and time_range != "No filter":
+                add("Time range", time_range)
+
+        query_form_data: dict[str, Any] = (
+            form_data.copy() if isinstance(form_data, dict) else {}
+        )
+        context_form_data = getattr(query_context, "form_data", None)
+        if isinstance(context_form_data, dict):
+            query_form_data.update(context_form_data)
+
+        for filter_ in query_form_data.get("adhoc_filters") or []:
+            if (
+                not isinstance(filter_, dict)
+                or filter_.get("expressionType") != "SQL"
+                or filter_.get("isExtra")
+                or not isinstance(filter_.get("sqlExpression"), str)
+                or not filter_["sqlExpression"].strip()
+            ):
+                continue
+            clause = str(filter_.get("clause") or "WHERE").upper()
+            if clause not in {"WHERE", "HAVING"}:
+                clause = "WHERE"
+            if export_filter_values is None:
+                add(f"Custom SQL filter ({clause})", filter_["sqlExpression"].strip())
+
+        for key in ("where", "having"):
+            sql_expression = query_form_data.get(key)
+            if isinstance(sql_expression, str) and sql_expression.strip():
+                if export_filter_values is None:
+                    add(f"Custom SQL filter ({key.upper()})", sql_expression.strip())
+
+        output = io.StringIO(newline="")
+        writer = csv.writer(output, lineterminator="\n")
+        writer.writerow(["Filter", "Value"])
+        writer.writerows(filters)
+        return output.getvalue()
 
     @staticmethod
     def _get_default_export_filename(
@@ -664,11 +806,26 @@ class ChartDataRestApi(ChartRestApi):
         add_extra_log_payload: Callable[..., None] | None = None,
         dashboard_filter_context: DashboardFilterContext | None = None,
         slice_: Slice | None = None,
+        export_filters_mode: ChartDataExportFiltersMode | None = None,
+        export_filter_values: list[dict[str, str]] | None = None,
     ) -> Response:
         """Get data response and optionally log is_cached information."""
         query_context = command.query_context
+        streaming_threshold = app.config.get("CSV_STREAMING_ROW_THRESHOLD", 100000)
+        if (
+            export_filters_mode == ChartDataExportFiltersMode.SEPARATE
+            and expected_rows is not None
+            and expected_rows >= streaming_threshold
+        ):
+            return self.response_400(
+                message=(
+                    "Separate filter files are unavailable for streamed CSV exports."
+                )
+            )
         try:
-            if self._should_stream_before_execution(query_context, expected_rows):
+            if self._should_stream_before_execution(
+                query_context, expected_rows, export_filters_mode
+            ):
                 # The client already decided to stream this export, so skip the
                 # regular execution: it would run the full query and hold every
                 # row in memory only to discard the result, and the streaming
@@ -716,6 +873,8 @@ class ChartDataRestApi(ChartRestApi):
             expected_rows,
             dashboard_filter_context=dashboard_filter_context,
             slice_=slice_,
+            export_filters_mode=export_filters_mode,
+            export_filter_values=export_filter_values,
         )
 
     def _extract_export_params_from_request(self) -> tuple[str | None, int | None]:
@@ -787,8 +946,23 @@ class ChartDataRestApi(ChartRestApi):
         return security_manager.can_access("can_csv", "Superset")
 
     @staticmethod
+    def _parse_export_filters_mode(
+        value: str | None,
+    ) -> ChartDataExportFiltersMode | None:
+        if value is None:
+            return None
+        try:
+            return ChartDataExportFiltersMode(value)
+        except ValueError as ex:
+            raise ValidationError(
+                {"export_filters_mode": ["Must be one of: none, inline, separate."]}
+            ) from ex
+
+    @staticmethod
     def _should_stream_before_execution(
-        query_context: QueryContext, expected_rows: int | None
+        query_context: QueryContext,
+        expected_rows: int | None,
+        export_filters_mode: ChartDataExportFiltersMode | None = None,
     ) -> bool:
         """
         Whether a CSV export can go straight to streaming without executing first.
@@ -798,9 +972,12 @@ class ChartDataRestApi(ChartRestApi):
         Only raw data (``FULL``) qualifies: post-processed results such as pivot
         tables need the regular execution path. Multi-query contexts also stay
         on the regular path: the streaming command exports a single query,
-        while the regular path bundles every query into a zip.
+        while the regular path bundles every query into a zip. Separate filter
+        exports are rejected when the client marks the CSV as streamed.
         """
         if expected_rows is None:
+            return False
+        if export_filters_mode == ChartDataExportFiltersMode.SEPARATE:
             return False
         if len(query_context.queries) != 1:
             return False
